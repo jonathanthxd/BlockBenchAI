@@ -2,7 +2,7 @@
 
 **An experimental, open-source AI copilot that models inside Blockbench.** Create editable geometry, generate painted PNG atlases, and refine projects using a dockable chat. No bundled paid subscription and no backend account required.
 
-**Current version: 0.5.0** · [MIT License](LICENSE) · **Desktop-first** · [Español](docs/README.es.md)
+**Current version: 0.5.1** · [MIT License](LICENSE) · **Desktop-first** · [Español](docs/README.es.md)
 
 > The native Blockbench UI and provider integration still need hands-on verification on users' machines. Passing mocked integration tests does not guarantee all Blockbench model formats, GPUs, export codecs or providers will behave identically.
 
@@ -14,6 +14,16 @@
 4. Create a **Generic Model** project and open **Blockbench AI** from the sidebar or the Tools menu.
 
 > This project is distributed externally. The Blockbench official plugin repository has restrictions on generative-AI plugins.
+
+## Fix in v0.5.1 — "Demo Dron" without an API key
+
+Typing **`Demo Dron`** into the chat now runs the **local** drone generator directly rather than sending it to an AI provider. The same applies to **`Demo Espada`**, **`Demo Androide`** and **`Demo Cofre`** (including `demo del dron` and `demo sin IA androide`). No API key or network access is required.
+
+The **Demos** button remains accessible in the chat's project bar even after previous messages hide the welcome screen. This is intentional: demos are editor actions, not AI prompts.
+
+**Before trying the fix:** uninstall the previous plugin, restart Blockbench, install the latest `blockbench_ai.js`, and verify the chat says **v0.5.1**. Create a fresh **Generic Model** and either type `Demo Dron` or use **Demos → Dron**.
+
+If you press the *actual offline demo button* and see an API-key error on v0.5.1, please report the click path and the Blockbench version; the demo handler itself does not call an AI endpoint.
 
 ## Start with free offline demos
 
