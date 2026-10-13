@@ -1,12 +1,14 @@
-/* Blockbench AI 0.2.1 — MIT License, github.com/jonathanthxd/BlockBenchAI */
+/* Blockbench AI 0.3.0 — MIT License, github.com/jonathanthxd/BlockBenchAI */
 (function () {
   'use strict';
 
   const ID = 'blockbench_ai';
-  const VERSION = '0.2.1';
+  const VERSION = '0.3.0';
   const DEFAULT_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
   const STORAGE_KEY = 'blockbench_ai_preferences_v1';
   const MAX_CUBES_PER_CALL = 32;
+  const MAX_PAINTED_PARTS = 96;
+  const FACE_NAMES = ['north', 'south', 'east', 'west', 'up', 'down'];
   const MAX_CUBES_PER_RUN = 192;
   const MAX_TOOL_CALLS = 36;
   const MAX_ROUNDS = 12;
@@ -48,6 +50,41 @@
     required: ['uuid']
   };
 
+
+  const hexSchema = {type: 'string', description: 'Hex RGB color such as #638DB4'};
+  const faceMarkSchema = {
+    type: 'object', additionalProperties: false,
+    properties: {
+      face: {type: 'string', enum: FACE_NAMES},
+      shape: {type: 'string', enum: ['pixel', 'rect', 'line']},
+      x: {type: 'integer', minimum: 0, maximum: 15},
+      y: {type: 'integer', minimum: 0, maximum: 15},
+      width: {type: 'integer', minimum: 1, maximum: 16},
+      height: {type: 'integer', minimum: 1, maximum: 16},
+      x2: {type: 'integer', minimum: 0, maximum: 15},
+      y2: {type: 'integer', minimum: 0, maximum: 15},
+      color: hexSchema
+    }, required: ['face', 'shape', 'x', 'y', 'color']
+  };
+  const paintSchema = {
+    type: 'object', additionalProperties: false,
+    properties: {
+      base: hexSchema,
+      accent: hexSchema,
+      material: {type: 'string', enum: ['metal', 'wood', 'fabric', 'stone', 'skin', 'circuit', 'gem', 'plain']},
+      noise: {type: 'number', minimum: 0, maximum: 0.5},
+      marks: {type: 'array', maxItems: 24, items: faceMarkSchema}
+    }, required: ['base']
+  };
+  const paintedPartSchema = {
+    type: 'object', additionalProperties: false,
+    properties: {
+      name: {type: 'string'}, from: vectorSchema, to: vectorSchema,
+      group: {type: 'string', description: 'Existing group UUID or name. Omit to use the generated root.'},
+      paint: paintSchema
+    }, required: ['name', 'from', 'to', 'paint']
+  };
+
   function tool(name, description, properties, required) {
     return {type: 'function', function: {name: name, description: description,
       parameters: {type: 'object', additionalProperties: false, properties: properties, required: required || []}}};
@@ -66,7 +103,23 @@
     }, ['cubes']),
     tool('edit_cubes', 'Edit existing cubes by UUID. Supply only properties to change; never invent UUIDs.', {
       cubes: {type: 'array', minItems: 1, maxItems: MAX_CUBES_PER_CALL, items: editSchema}
-    }, ['cubes'])
+    }, ['cubes']),
+    tool('build_painted_model', 'PREFERRED for detailed objects, machines, armor and props: create up to 96 named cubes, a REAL PNG texture atlas, shaded materials and painted features. Use smaller distinct parts for fine geometry. All color values are hex RGB; viewport color indices are not textures.', {
+      name: {type: 'string', description: 'Name of the model root group and generated texture'},
+      parts: {type: 'array', minItems: 1, maxItems: MAX_PAINTED_PARTS, items: paintedPartSchema}
+    }, ['name','parts']),
+    tool('paint_existing_cubes', 'Paint actual texture pixels on existing cube UUIDs, preserving all geometry. Creates an internal textured atlas and assigns per-face UVs. Best for adding shading, surface patterns, eyes, or circuit details.', {
+      parts: {type: 'array', minItems: 1, maxItems: MAX_CUBES_PER_CALL, items: {
+        type: 'object', additionalProperties: false, properties: {uuid: {type: 'string'}, paint: paintSchema},
+        required: ['uuid','paint']
+      }}
+    }, ['parts']),
+    tool('generate_character', 'Generate a visually detailed textured humanoid automatically: articulated armor plates, segments, fingers, boots, face pixels, mechanical accents and a real PNG atlas. Ideal for an android villager, robot or fantasy humanoid. Prefer over basic cuboid scaffolds.', {
+      name: {type: 'string'},
+      style: {type: 'string', enum: ['android_villager','robot','villager','knight']},
+      primary: hexSchema, secondary: hexSchema, accent: hexSchema,
+      skin: hexSchema
+    }, ['name','style'])
   ];
 
   function fail(message) { throw new Error(message); }
@@ -264,12 +317,306 @@
     redraw(planned.map(function (p) {return p.cube;}));
     return {edited: planned.map(function (p) {return {uuid: p.cube.uuid, name: p.cube.name};})};
   }
+
+  // Pixel painter: real PNG pixels, not Blockbench's non-exported viewport palette colors.
+  // Every face receives a unique 16x16 tile, so eyes/patterns never bleed into adjacent faces.
+  function rgb(value, label) {
+    if (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value)) fail(label + ' must be a #RRGGBB color.');
+    return [1,3,5].map(function (i) {return parseInt(value.slice(i,i+2),16);});
+  }
+  function colorCode(r, g, b) {
+    return '#' + [r,g,b].map(function (v) {return Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0');}).join('');
+  }
+  function adjustColor(base, delta) {
+    return colorCode(base[0]+delta,base[1]+delta,base[2]+delta);
+  }
+  function validatePaint(paint) {
+    if (!paint || typeof paint !== 'object') fail('Each part requires a paint specification.');
+    const out = {
+      base: rgb(paint.base,'base'), accent: paint.accent ? rgb(paint.accent,'accent') : null,
+      material: paint.material || 'plain',
+      noise: paint.noise === undefined ? 0.09 : paint.noise,
+      marks: []
+    };
+    if (!['metal','wood','fabric','stone','skin','circuit','gem','plain'].includes(out.material)) fail('Unsupported material');
+    if (typeof out.noise !== 'number' || out.noise < 0 || out.noise > 0.5 || !Number.isFinite(out.noise)) fail('Noise must be between 0 and 0.5');
+    if (paint.marks !== undefined && (!Array.isArray(paint.marks) || paint.marks.length > 24)) fail('At most 24 paint marks per part.');
+    (paint.marks || []).forEach(function (m) {
+      if (!m || !FACE_NAMES.includes(m.face) || !['pixel','rect','line'].includes(m.shape)) fail('Invalid face mark.');
+      const outMark = {face: m.face, shape: m.shape, x: m.x, y: m.y, color: colorCode.apply(null,rgb(m.color,'mark color'))};
+      if (![m.x,m.y].every(function (n) {return Number.isInteger(n) && n >= 0 && n <= 15;})) fail('Mark X and Y must be from 0 to 15.');
+      if (m.shape === 'rect') {
+        outMark.width = m.width === undefined ? 1 : m.width;
+        outMark.height = m.height === undefined ? 1 : m.height;
+        if (![outMark.width,outMark.height].every(function (n) {return Number.isInteger(n) && n >= 1 && n <= 16;})) fail('Invalid rectangle size.');
+      }
+      if (m.shape === 'line') {
+        if (![m.x2,m.y2].every(function (n) {return Number.isInteger(n) && n >= 0 && n <= 15;})) fail('Line needs x2, y2 between 0 and 15.');
+        outMark.x2=m.x2;outMark.y2=m.y2;
+      }
+      out.marks.push(outMark);
+    });
+    return out;
+  }
+  function paintCapability() {
+    allowCubes();
+    if (typeof Texture === 'undefined' || !Texture || !Texture.prototype || typeof Texture.prototype.fromDataURL !== 'function') {
+      fail('This Blockbench version does not expose internal PNG textures.');
+    }
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') fail('Canvas pixel painting is not available.');
+    if (Format.textures === false) fail('The active format does not support textures.');
+    if (Format.single_texture && Texture.all && Texture.all.length) {
+      fail('The active format supports only one texture and already has one. Painting a separate atlas could invalidate existing UVs. Use an empty Generic Model for this tool.');
+    }
+  }
+  function seededColor(seed, noise) {
+    const v = Math.sin(seed * 64.217 + 18.711) * 43758.5453;
+    return (v-Math.floor(v)-0.5)*2*noise*65;
+  }
+  function drawLine(ctx, x1, y1, x2, y2) {
+    let dx=Math.abs(x2-x1),dy=Math.abs(y2-y1),sx=x1<x2?1:-1,sy=y1<y2?1:-1,err=dx-dy;
+    while(true){ctx.fillRect(x1,y1,1,1);if(x1===x2&&y1===y2)break;const e=2*err;if(e>-dy){err-=dy;x1+=sx;}if(e<dx){err+=dx;y1+=sy;}}
+  }
+  function drawFace(ctx, ox, oy, paint, direction, index) {
+    const shifts={north:0,south:-12,east:-15,west:-8,up:16,down:-23};
+    const light=shifts[direction];
+    ctx.fillStyle=adjustColor(paint.base,light);
+    ctx.fillRect(ox,oy,16,16);
+    if (paint.noise) {
+      for(let y=0;y<16;y++)for(let x=0;x<16;x++) {
+        const seed=(index+1)*823+(y+2)*79+(x+5)*31;
+        const random=Math.sin(seed*14.156)*45673.824;
+        const fract=random-Math.floor(random);
+        if(fract<Math.min(0.35,paint.noise*1.1)){
+          ctx.fillStyle=adjustColor(paint.base,light+seededColor(seed,paint.noise)*2);
+          ctx.fillRect(ox+x,oy+y,1,1);
+        }
+      }
+    }
+    const dark=adjustColor(paint.base,light-32), bright=adjustColor(paint.base,light+34);
+    const accent=paint.accent?colorCode.apply(null,paint.accent):bright;
+    switch (paint.material) {
+      case 'metal':
+        ctx.fillStyle=bright;ctx.fillRect(ox+1,oy+1,14,1);ctx.fillRect(ox+1,oy+2,1,12);
+        ctx.fillStyle=dark;ctx.fillRect(ox+1,oy+14,14,1);ctx.fillRect(ox+14,oy+2,1,12);
+        ctx.fillRect(ox+2,oy+3,1,1);ctx.fillRect(ox+13,oy+12,1,1);
+        break;
+      case 'wood':
+        ctx.fillStyle=dark;for(let a=3;a<16;a+=5){ctx.fillRect(ox+a,oy+1,1,10);ctx.fillRect(ox+a+1,oy+9,1,6);}
+        ctx.fillStyle=bright;ctx.fillRect(ox+1,oy+4,1,9);
+        break;
+      case 'fabric':
+        ctx.fillStyle=dark;for(let a=0;a<16;a+=4)ctx.fillRect(ox,oy+a,16,1);
+        ctx.fillStyle=bright;ctx.fillRect(ox,oy,16,1);
+        break;
+      case 'stone':
+        ctx.fillStyle=dark;ctx.fillRect(ox+2,oy+4,7,1);ctx.fillRect(ox+9,oy+4,1,5);ctx.fillRect(ox+6,oy+10,9,1);
+        break;
+      case 'skin':
+        ctx.fillStyle=bright;ctx.fillRect(ox+2,oy+2,12,1);
+        ctx.fillStyle=dark;ctx.fillRect(ox+3,oy+13,10,1);
+        break;
+      case 'circuit':
+        ctx.fillStyle=dark;ctx.fillRect(ox+1,oy+1,14,14);
+        ctx.fillStyle=accent;
+        ctx.fillRect(ox+7,oy+3,2,10);ctx.fillRect(ox+3,oy+7,10,2);
+        for(const [x,y] of [[3,3],[12,3],[3,12],[12,12]])ctx.fillRect(ox+x,oy+y,2,2);
+        break;
+      case 'gem':
+        ctx.fillStyle=bright;ctx.fillRect(ox+3,oy+3,7,3);
+        ctx.fillStyle=dark;ctx.fillRect(ox+9,oy+8,5,5);
+        break;
+      default: break;
+    }
+    paint.marks.filter(function(m){return m.face===direction;}).forEach(function(m){
+      ctx.fillStyle=m.color;
+      if(m.shape==='pixel')ctx.fillRect(ox+m.x,oy+m.y,1,1);
+      else if(m.shape==='rect')ctx.fillRect(ox+m.x,oy+m.y,Math.min(16-m.x,m.width),Math.min(16-m.y,m.height));
+      else drawLine(ctx,ox+m.x,oy+m.y,ox+m.x2,oy+m.y2);
+    });
+  }
+  function buildAtlas(paints, label) {
+    paintCapability();
+    const columns=paints.length>40?32:16, width=columns*16;
+    const rows=Math.ceil(paints.length*6/columns);
+    const height=Math.pow(2,Math.ceil(Math.log2(Math.max(16,rows*16))));
+    if (height>1024) fail('The painted model exceeds the safe atlas size.');
+    const canvas=document.createElement('canvas');
+    canvas.width=width;canvas.height=height;
+    const ctx=canvas.getContext('2d');
+    if(!ctx)fail('Could not initialize a 2D canvas.');
+    ctx.imageSmoothingEnabled=false;
+    paints.forEach(function(paint,i){
+      FACE_NAMES.forEach(function(face,j){
+        const slot=i*6+j,px=(slot%columns)*16,py=Math.floor(slot/columns)*16;
+        drawFace(ctx,px,py,paint,face,i);
+      });
+    });
+    const data=canvas.toDataURL('image/png');
+    if(!data.startsWith('data:image/png;base64,'))fail('Unable to encode the texture atlas as PNG.');
+    const texture=new Texture({name:'AI_'+safeName(label).replace(/[^a-z0-9_-]/gi,'_')+'.png',width:width,height:height});
+    texture.fromDataURL(data);
+    return {texture:texture,width:width,height:height,columns:columns,paints:paints};
+  }
+  function mapCubeToAtlas(cube,atlas,index) {
+    if(typeof cube.setUVMode==='function')cube.setUVMode(false);
+    else cube.box_uv=false;
+    cube.autouv=0;
+    const uSize=(typeof atlas.texture.getUVWidth==='function' && atlas.texture.getUVWidth())||Project.texture_width||16;
+    const vSize=(typeof atlas.texture.getUVHeight==='function' && atlas.texture.getUVHeight())||Project.texture_height||16;
+    FACE_NAMES.forEach(function(faceName,j){
+      const face=cube.faces&&cube.faces[faceName];if(!face)fail('Cube face '+faceName+' is not available.');
+      const slot=index*6+j, px=(slot%atlas.columns)*16,py=Math.floor(slot/atlas.columns)*16;
+      face.texture=atlas.texture.uuid;
+      face.uv=[px/atlas.width*uSize,py/atlas.height*vSize,(px+16)/atlas.width*uSize,(py+16)/atlas.height*vSize];
+    });
+  }
+  function buildPaintedModel(args,budget) {
+    paintCapability();
+    if (!Array.isArray(args.parts)||!args.parts.length||args.parts.length>MAX_PAINTED_PARTS) fail('Painted model requires 1 to 96 parts.');
+    if (args.parts.length>budget.remainingCubes) fail('Not enough geometry budget for this request.');
+    const title=safeName(args.name);
+    const planned=args.parts.map(function(part){
+      if(!part||typeof part!=='object')fail('Invalid painted model part.');
+      const coords=coordinates(part);
+      return {name:safeName(part.name),from:coords.from,to:coords.to,paint:validatePaint(part.paint),
+        group:part.group?resolveGroup(part.group):null};
+    });
+    const atlas=buildAtlas(planned.map(function(part){return part.paint;}),title);
+    const created=[], rootName=title, changed=[];
+    let root=null,textureAdded=false;
+    Undo.initEdit({elements:[],outliner:true,textures:[]});
+    try {
+      atlas.texture.add(false);
+      textureAdded=true;
+      root=new Group({name:rootName}).init().addTo('root');
+      planned.forEach(function(part,i){
+        const cube=new Cube({name:part.name,from:part.from,to:part.to}).init().addTo(part.group||root);
+        created.push(cube);
+        mapCubeToAtlas(cube,atlas,i);
+      });
+      Undo.finishEdit('AI: Detailed painted model '+title, {elements:created,outliner:true,textures:[atlas.texture]});
+    } catch(error){
+      created.forEach(function(c){try{c.remove();}catch(_){}});
+      if(root)try{root.remove();}catch(_){}
+      if(textureAdded)try{atlas.texture.remove(true);}catch(_){}
+      rollback();throw error;
+    }
+    budget.remainingCubes-=created.length;
+    redraw(created);
+    return {group:{uuid:root.uuid,name:root.name},texture:{uuid:atlas.texture.uuid,name:atlas.texture.name,
+      pixels:[atlas.width,atlas.height]},created_count:created.length,parts:created.slice(0,60).map(function(c){return {uuid:c.uuid,name:c.name};})};
+  }
+  function paintExistingCubes(args) {
+    paintCapability();
+    if (!Array.isArray(args.parts)||!args.parts.length||args.parts.length>MAX_CUBES_PER_CALL)fail('Provide 1 to 32 cube paints.');
+    const planned=args.parts.map(function(p){return {cube:findCube(p.uuid),paint:validatePaint(p.paint)};});
+    if(new Set(planned.map(function(p){return p.cube.uuid;})).size!==planned.length)fail('Duplicate cube UUID.');
+    const atlas=buildAtlas(planned.map(function(p){return p.paint;}),'repaint_'+Date.now());
+    const original=planned.map(function(p){return {cube:p.cube,box_uv:p.cube.box_uv,autouv:p.cube.autouv,
+      faces:Object.fromEntries(FACE_NAMES.map(function(f){return [f,{texture:p.cube.faces[f].texture,uv:p.cube.faces[f].uv.slice()}];}))};});
+    let textureAdded=false;
+    Undo.initEdit({elements:planned.map(function(p){return p.cube;}),textures:[]});
+    try {
+      atlas.texture.add(false);textureAdded=true;
+      planned.forEach(function(p,i){mapCubeToAtlas(p.cube,atlas,i);});
+      Undo.finishEdit('AI: Paint '+planned.length+' cubes',{elements:planned.map(function(p){return p.cube;}),textures:[atlas.texture]});
+    } catch(error){
+      original.forEach(function(saved){
+        saved.cube.box_uv=saved.box_uv;saved.cube.autouv=saved.autouv;
+        FACE_NAMES.forEach(function(face){Object.assign(saved.cube.faces[face],saved.faces[face]);});
+      });
+      if(textureAdded)try{atlas.texture.remove(true);}catch(_){}
+      rollback();throw error;
+    }
+    redraw(planned.map(function(p){return p.cube;}));
+    return {painted:planned.map(function(p){return {uuid:p.cube.uuid,name:p.cube.name};}),
+      texture:{uuid:atlas.texture.uuid,name:atlas.texture.name,pixels:[atlas.width,atlas.height]}};
+  }
+
+  function detailedHumanoid(args,budget) {
+    const name=safeName(args.name);
+    const style=args.style||'android_villager';
+    if(!['android_villager','robot','villager','knight'].includes(style))fail('Unknown character style.');
+    const skin=args.skin||'#B69B79';
+    const primary=args.primary||'#566876';
+    const secondary=args.secondary||'#303842';
+    const accent=args.accent||'#55D8E8';
+    [skin,primary,secondary,accent].forEach(function(c){rgb(c,'character color');});
+    const isAndroid=style==='android_villager'||style==='robot';
+    const P=[];
+    function part(n,x1,y1,z1,x2,y2,z2,c,material,accentColor,marks) {
+      P.push({name:n,from:[x1,y1,z1],to:[x2,y2,z2],
+        paint:{base:c,material:material||'metal',accent:accentColor||accent,noise:0.07,marks:marks||[]}});
+    }
+    const light='#A8B9C1',dark='#192129',gold='#D6AA53';
+    function mark(face,shape,x,y,color,width,height){return {face,shape,x,y,color,width:width||1,height:height||1};}
+    // Character front faces -Z; segmented anatomy with mechanical joints and usable feet.
+    part('Core | Torso',-4,13,-2.6,4,24,2.6,primary,'metal');
+    part('Chest | Armor',-3.8,18,-3.15,3.8,23.1,-2.55,secondary,'metal',accent,
+      [mark('north','rect',5,5,accent,6,2),mark('north','rect',7,9,gold,2,2)]);
+    part('Core | Power Cell',-1.6,16.4,-3.8,1.6,19.3,-3.1,accent,'gem');
+    part('Backplate',-3.7,16,2.6,3.7,23.7,3.35,secondary,'metal');
+    part('Waist | Belt',-4.4,12,-3.0,4.4,14,3.0,secondary,'metal');
+    part('Waist | Buckle',-1.2,12.2,-3.5,1.2,13.8,-3.0,gold,'metal');
+    part('Neck | Servo',-1.5,23.6,-1.5,1.5,26,1.5,secondary,'circuit');
+    part('Head | Skull',-4,25,-4.0,4,33.1,3.8,isAndroid?secondary:skin,isAndroid?'metal':'skin',accent,
+      [mark('north','rect',3,6,accent,3,2),mark('north','rect',10,6,accent,3,2),mark('north','rect',7,10,dark,2,1)]);
+    part('Head | Faceplate',-3.6,26,-4.35,3.6,31.5,-4.0,isAndroid?primary:skin,'metal',accent,
+      [mark('north','rect',3,5,accent,3,2),mark('north','rect',10,5,accent,3,2),mark('north','rect',6,11,dark,4,1)]);
+    part('Villager | Nose',-1.1,26.8,-6.2,1.1,30.2,-4.3,isAndroid?light:skin,isAndroid?'metal':'skin');
+    part('Eyebrow | Left',-3.0,30.7,-4.5,-.8,31.2,-4.1,secondary,'metal');
+    part('Eyebrow | Right',.8,30.7,-4.5,3.0,31.2,-4.1,secondary,'metal');
+    part('Jaw | Lower',-3.1,25.3,-4.5,3.1,26.4,-3.75,primary,'metal');
+    part('Head | Top Panel',-4.1,33.0,-4.1,4.1,34.0,3.8,secondary,'metal');
+    part('Head | Crest',-2,34,-2.5,2,34.8,1.3,accent,'gem');
+    part('Ear | Left Servo',-4.8,28,-1.8,-4,31,1.6,secondary,'circuit');
+    part('Ear | Right Servo',4,28,-1.8,4.8,31,1.6,secondary,'circuit');
+    part('Antenna | Stem',1.8,34,0,2.2,36.5,.4,light,'metal');
+    part('Antenna | Tip',1.3,36.4,-.5,2.7,37.7,.9,accent,'gem');
+    for(const side of [-1,1]) {
+      const prefix=side<0?'Left':'Right';
+      const a=side<0?[-6,-4.1]:[4.1,6];
+      const outer=side<0?[-7.1,-4.1]:[4.1,7.1];
+      const joint=side<0?-5.55:5.55;
+      part(prefix+' | Shoulder',outer[0],20.4,-2.7,outer[1],24,2.7,primary,'metal');
+      part(prefix+' | Shoulder Rim',outer[0]-.15,23,-2.95,outer[1]+.15,24.4,2.95,light,'metal');
+      part(prefix+' | Upper Arm',a[0],16.3,-2, a[1],21.2,2,secondary,'metal');
+      part(prefix+' | Elbow Joint',joint-1,15.4,-2.2,joint+1,17.3,2.2,accent,'circuit');
+      part(prefix+' | Forearm',outer[0],11.3,-2.5,outer[1],16.2,2.5,primary,'metal');
+      part(prefix+' | Wrist Ring',outer[0]-.2,11,-2.7,outer[1]+.2,12,2.7,light,'metal');
+      part(prefix+' | Hand',a[0]-.3,8,-2, a[1]+.3,11.5,2,secondary,'metal');
+      for(let finger=0;finger<3;finger++){
+        const dx=outer[0]+.3+finger*.8;
+        part(prefix+' | Finger '+(finger+1),dx,6.5,-1.5,dx+.48,8.1,1.1,light,'metal');
+      }
+      const lx=side<0?-2.3:2.3;
+      part(prefix+' | Hip',lx-1.75,10.8,-2.35,lx+1.75,13.3,2.35,secondary,'metal');
+      part(prefix+' | Thigh',lx-1.65,6.2,-2,lx+1.65,11,2,primary,'metal');
+      part(prefix+' | Knee Servo',lx-1.7,5.8,-2.4,lx+1.7,7.3,2.4,accent,'circuit');
+      part(prefix+' | Shin',lx-1.6,1.9,-1.8,lx+1.6,6.2,1.8,secondary,'metal');
+      part(prefix+' | Shin Plate',lx-1.5,2.5,-2.15,lx+1.5,5.5,-1.8,primary,'metal');
+      part(prefix+' | Boot',lx-1.9,0,-3.9,lx+1.9,2.5,2.4,secondary,'metal');
+      part(prefix+' | Boot Toe',lx-1.85,0,-4.5,lx+1.85,1.4,-3.9,light,'metal');
+    }
+    if(isAndroid) {
+      part('Back | Battery',-2,15.5,3.35,2,21.5,4.55,secondary,'circuit');
+      part('Back | Battery LED',-.8,17.2,4.5,.8,19.9,5.1,accent,'gem');
+      part('Torso | Service Vent Left',-3.6,14.7,-3.35,-1.6,16.6,-3.05,dark,'circuit');
+      part('Torso | Service Vent Right',1.6,14.7,-3.35,3.6,16.6,-3.05,dark,'circuit');
+    }
+    return buildPaintedModel({name:name,parts:P},budget);
+  }
+
   function runTool(name, args, budget) {
     if (Project !== budget.project) fail('Project changed during this request. Stopping to protect your work.');
     if (name === 'inspect_scene') return scene(args);
     if (name === 'create_group') return createGroup(args || {});
     if (name === 'create_cubes') return createCubes(args || {}, budget);
     if (name === 'edit_cubes') return editCubes(args || {});
+    if (name === 'build_painted_model') return buildPaintedModel(args || {}, budget);
+    if (name === 'paint_existing_cubes') return paintExistingCubes(args || {});
+    if (name === 'generate_character') return detailedHumanoid(args || {}, budget);
     fail('Unknown tool: ' + name);
   }
 
@@ -385,11 +732,15 @@
   function systemPrompt() {
     return 'You are Blockbench AI, an AI modeling agent operating a native Blockbench project. ' +
       'You can INSPECT, CREATE native cube geometry, CREATE groups and EDIT existing cubes. ' +
-      'You CANNOT paint textures, generate images, create meshes, make rigs or animations, export files, delete elements, or run code. ' +
+      'You CAN generate ACTUAL painted PNG atlases (pixel shaders, material patterns, face marks), add fine details, and repaint existing cubes. You CANNOT generate external images, arbitrary meshes, rigs or animation, export files, delete elements, or run code. ' +
       'Never claim to have done an unsupported operation. Use tools, not fictional descriptions, to make changes. ' +
       'Cubes use XYZ from/to vectors in Blockbench units, origin optional, axis-aligned only. ' +
-      'Create coherent named parts, preferably organized into groups. For large objects break geometry into batches. ' +
-      'Palette index is a viewport display color only, NOT a saved image texture. ' +
+      'FOR HUMANOIDS, VILLAGERS, ANDROIDS, ROBOTS: use generate_character FIRST to get a detailed painted base, then add specific custom details. ' +
+      'FOR ANY OTHER OBJECT: prefer build_painted_model with 20-70 purposefully detailed named parts and different #RRGGBB material colors, rather than create_cubes. ' +
+      'For custom facial or circuit patterns use paint.marks with face north, coordinates 0..15, rect/pixel/line. FRONT is -Z (north). ' +
+      'For details on existing geometry use paint_existing_cubes with actual UUIDs. ' +
+      'Favor distinct silhouette, layering, small ornaments, mechanical joints, and contrast. Create coherent named parts. ' +
+      'For create_cubes only, palette indices are non-exported viewport colors; painted tools use real exported PNG atlas textures. ' +
       'Respect the active project format and format capabilities. Avoid touching unrelated cubes. ' +
       'After each tool response continue only if necessary; summarize what was really changed. ' +
       'If a request is beyond the available tools, say what part cannot yet be done. ' +
@@ -542,7 +893,7 @@
     return 'He alcanzado el límite de pasos. Los cambios realizados se pueden deshacer en Blockbench. Puedes pedirme que continúe.';
   }
 
-  const TEMPLATE = "\n<section class=\"bbai-root\">\n  <header class=\"bbai-topbar\">\n    <div class=\"bbai-identity\">\n      <div class=\"bbai-logomark\"><i class=\"material-icons\">auto_awesome</i></div>\n      <div class=\"bbai-brand\">\n        <strong>Blockbench AI</strong>\n        <span>Tu asistente de modelado</span>\n      </div>\n    </div>\n    <button class=\"bbai-icon-button\" type=\"button\" @click=\"view === 'settings' ? view = 'chat' : openSettings()\" :title=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\" :aria-label=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\">\n      <i class=\"material-icons\">{{ view === 'settings' ? 'close' : 'tune' }}</i>\n    </button>\n  </header>\n  <nav class=\"bbai-tabs\" aria-label=\"Secciones de Blockbench AI\">\n    <button type=\"button\" :class=\"{active: view === 'chat'}\" @click=\"view = 'chat'\"><i class=\"material-icons\">chat_bubble_outline</i> Chat</button>\n    <button type=\"button\" :class=\"{active: view === 'settings'}\" @click=\"openSettings()\"><i class=\"material-icons\">settings</i> Ajustes</button>\n    <span class=\"bbai-version\">v0.2.1</span>\n  </nav>\n\n  <template v-if=\"view === 'settings'\">\n    <div class=\"bbai-settings-view\">\n      <div class=\"bbai-section-intro\">\n        <div class=\"bbai-section-icon\"><i class=\"material-icons\">tune</i></div>\n        <h3>Configurar IA</h3>\n        <p>Elige tu proveedor y conecta un modelo compatible con herramientas.</p>\n      </div>\n      <div class=\"bbai-config-card\">\n        <label class=\"bbai-field\">\n          <span>Proveedor</span>\n          <select v-model=\"provider\" @change=\"changeProvider\">\n            <option value=\"groq\">Groq · plan gratuito</option>\n            <option value=\"openai\">OpenAI</option>\n            <option value=\"custom\">Personalizado / local</option>\n          </select>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Modelo</span>\n          <input v-model.trim=\"model\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"openai/gpt-oss-120b\">\n          <small>Usa el identificador exacto indicado por tu proveedor.</small>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Endpoint de Chat Completions</span>\n          <input v-model.trim=\"endpoint\" type=\"url\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"https://.../chat/completions\">\n        </label>\n        <label class=\"bbai-field\">\n          <span>API key <em>Solo esta sesión</em></span>\n          <input v-model=\"apiKey\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"Introduce tu API key\">\n          <small>Tu clave no se guarda en el proyecto ni en las preferencias de Blockbench.</small>\n        </label>\n      </div>\n      <div class=\"bbai-notice\"><i class=\"material-icons\">verified_user</i><p>Los mensajes y un resumen del modelo se envían al endpoint elegido. Usa únicamente proveedores en los que confíes.</p></div>\n      <button type=\"button\" class=\"bbai-primary-button bbai-save\" @click=\"saveSettings()\">\n        <i class=\"material-icons\">check</i> Guardar configuración\n      </button>\n      <p class=\"bbai-settings-foot\">También encontrarás proveedor, modelo y endpoint en la pestaña <strong>Settings</strong> del plugin. La clave se introduce aquí o mediante su botón de configuración.</p>\n    </div>\n  </template>\n\n  <template v-else>\n    <div class=\"bbai-context-bar\">\n      <span class=\"bbai-live-dot\"></span>\n      <span class=\"bbai-context-project\" :title=\"projectLabel\">{{ projectLabel }}</span>\n      <button class=\"bbai-icon-button bbai-reset\" type=\"button\" @click=\"resetChat()\" :disabled=\"busy\" title=\"Nueva conversación\" aria-label=\"Nueva conversación\"><i class=\"material-icons\">edit_square</i></button>\n    </div>\n\n    <main class=\"bbai-conversation\" ref=\"history\" aria-live=\"polite\">\n      <div v-if=\"!messages.length\" class=\"bbai-welcome\">\n        <div class=\"bbai-welcome-badge\"><i class=\"material-icons\">auto_awesome</i><span>Tu espacio creativo</span></div>\n        <div class=\"bbai-orb\"><i class=\"material-icons\">view_in_ar</i></div>\n        <h2>Imagina. Describe.<br><span>Construye.</span></h2>\n        <p>Tu modelo empieza con una idea. Pídeme que cree geometrías, organice partes o edite los cubos de tu proyecto.</p>\n        <div class=\"bbai-suggestions\">\n          <button type=\"button\" @click=\"useSuggestion('Crea un pequeño robot con cabeza, torso, brazos y piernas. Organiza sus partes en grupos.')\"><i class=\"material-icons\">smart_toy</i><span>Crear un robot</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Diseña una espada medieval con hoja, guarda, empuñadura y pomo usando cubos.')\"><i class=\"material-icons\">auto_fix_high</i><span>Diseñar una espada</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Inspecciona el modelo actual y dime cómo están organizados sus elementos.')\"><i class=\"material-icons\">account_tree</i><span>Analizar el modelo</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n        </div>\n      </div>\n\n      <article v-for=\"(message, index) in messages\" :key=\"index\" class=\"bbai-entry\" :class=\"'bbai-entry-' + message.role\">\n        <div class=\"bbai-entry-meta\">\n          <span v-if=\"message.role === 'assistant'\" class=\"bbai-entry-avatar\"><i class=\"material-icons\">auto_awesome</i></span>\n          <span v-else class=\"bbai-user-avatar\"><i class=\"material-icons\">person</i></span>\n          <strong>{{ message.role === 'user' ? 'Tú' : 'Blockbench AI' }}</strong>\n        </div>\n        <div class=\"bbai-entry-text\">{{ message.content }}</div>\n      </article>\n      <div v-if=\"busy\" class=\"bbai-active-step\" role=\"status\">\n        <span class=\"bbai-thinking-icon\"><i class=\"material-icons\">auto_awesome</i></span>\n        <div><strong>Trabajando en tu modelo</strong><span>{{ status }}</span></div>\n        <span class=\"bbai-pulse-dot\"></span>\n      </div>\n    </main>\n\n    <div class=\"bbai-bottom\">\n      <div v-if=\"!apiKey\" class=\"bbai-setup-hint\"><i class=\"material-icons\">key</i><span>¿Aún no conectas tu IA?</span><button type=\"button\" @click=\"openSettings()\">Configurar</button></div>\n      <form class=\"bbai-composer\" @submit.prevent=\"send()\">\n        <textarea v-model=\"prompt\" :disabled=\"busy\" @keydown.enter.exact.prevent=\"send()\" placeholder=\"Describe lo que quieres crear...\" rows=\"3\" maxlength=\"4000\" aria-label=\"Mensaje para Blockbench AI\"></textarea>\n        <div class=\"bbai-compose-toolbar\">\n          <span class=\"bbai-compose-tip\"><i class=\"material-icons\">deployed_code</i> Geometría editable</span>\n          <button v-if=\"busy\" class=\"bbai-stop-button\" type=\"button\" @click=\"cancel()\" title=\"Cancelar solicitud\"><i class=\"material-icons\">stop</i> Detener</button>\n          <button v-else class=\"bbai-send-button\" type=\"submit\" :disabled=\"!prompt.trim()\" title=\"Enviar mensaje\" aria-label=\"Enviar mensaje\"><i class=\"material-icons\">arrow_upward</i></button>\n        </div>\n      </form>\n      <div class=\"bbai-footer\"><span>Enter para enviar · Shift + Enter para nueva línea</span><span class=\"bbai-footer-status\"><i class=\"material-icons\">history</i> Undo</span></div>\n    </div>\n  </template>\n</section>";
+  const TEMPLATE = "\n<section class=\"bbai-root\">\n  <header class=\"bbai-topbar\">\n    <div class=\"bbai-identity\">\n      <div class=\"bbai-logomark\"><i class=\"material-icons\">auto_awesome</i></div>\n      <div class=\"bbai-brand\">\n        <strong>Blockbench AI</strong>\n        <span>Tu asistente de modelado</span>\n      </div>\n    </div>\n    <button class=\"bbai-icon-button\" type=\"button\" @click=\"view === 'settings' ? view = 'chat' : openSettings()\" :title=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\" :aria-label=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\">\n      <i class=\"material-icons\">{{ view === 'settings' ? 'close' : 'tune' }}</i>\n    </button>\n  </header>\n  <nav class=\"bbai-tabs\" aria-label=\"Secciones de Blockbench AI\">\n    <button type=\"button\" :class=\"{active: view === 'chat'}\" @click=\"view = 'chat'\"><i class=\"material-icons\">chat_bubble_outline</i> Chat</button>\n    <button type=\"button\" :class=\"{active: view === 'settings'}\" @click=\"openSettings()\"><i class=\"material-icons\">settings</i> Ajustes</button>\n    <span class=\"bbai-version\">v0.3</span>\n  </nav>\n\n  <template v-if=\"view === 'settings'\">\n    <div class=\"bbai-settings-view\">\n      <div class=\"bbai-section-intro\">\n        <div class=\"bbai-section-icon\"><i class=\"material-icons\">tune</i></div>\n        <h3>Configurar IA</h3>\n        <p>Elige tu proveedor y conecta un modelo compatible con herramientas.</p>\n      </div>\n      <div class=\"bbai-config-card\">\n        <label class=\"bbai-field\">\n          <span>Proveedor</span>\n          <select v-model=\"provider\" @change=\"changeProvider\">\n            <option value=\"groq\">Groq · plan gratuito</option>\n            <option value=\"openai\">OpenAI</option>\n            <option value=\"custom\">Personalizado / local</option>\n          </select>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Modelo</span>\n          <input v-model.trim=\"model\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"openai/gpt-oss-120b\">\n          <small>Usa el identificador exacto indicado por tu proveedor.</small>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Endpoint de Chat Completions</span>\n          <input v-model.trim=\"endpoint\" type=\"url\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"https://.../chat/completions\">\n        </label>\n        <label class=\"bbai-field\">\n          <span>API key <em>Solo esta sesión</em></span>\n          <input v-model=\"apiKey\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"Introduce tu API key\">\n          <small>Tu clave no se guarda en el proyecto ni en las preferencias de Blockbench.</small>\n        </label>\n      </div>\n      <div class=\"bbai-notice\"><i class=\"material-icons\">verified_user</i><p>Los mensajes y un resumen del modelo se envían al endpoint elegido. Usa únicamente proveedores en los que confíes.</p></div>\n      <button type=\"button\" class=\"bbai-primary-button bbai-save\" @click=\"saveSettings()\">\n        <i class=\"material-icons\">check</i> Guardar configuración\n      </button>\n      <p class=\"bbai-settings-foot\">También encontrarás proveedor, modelo y endpoint en la pestaña <strong>Settings</strong> del plugin. La clave se introduce aquí o mediante su botón de configuración.</p>\n    </div>\n  </template>\n\n  <template v-else>\n    <div class=\"bbai-context-bar\">\n      <span class=\"bbai-live-dot\"></span>\n      <span class=\"bbai-context-project\" :title=\"projectLabel\">{{ projectLabel }}</span>\n      <button class=\"bbai-icon-button bbai-reset\" type=\"button\" @click=\"resetChat()\" :disabled=\"busy\" title=\"Nueva conversación\" aria-label=\"Nueva conversación\"><i class=\"material-icons\">edit_square</i></button>\n    </div>\n\n    <main class=\"bbai-conversation\" ref=\"history\" aria-live=\"polite\">\n      <div v-if=\"!messages.length\" class=\"bbai-welcome\">\n        <div class=\"bbai-welcome-badge\"><i class=\"material-icons\">auto_awesome</i><span>Tu espacio creativo</span></div>\n        <div class=\"bbai-orb\"><i class=\"material-icons\">view_in_ar</i></div>\n        <h2>Imagina. Describe.<br><span>Construye.</span></h2>\n        <p>Tu modelo empieza con una idea. Pídeme que cree geometrías, organice partes o edite los cubos de tu proyecto.</p>\n        <div class=\"bbai-suggestions\">\n          <button type=\"button\" @click=\"useSuggestion('Crea un pequeño robot con cabeza, torso, brazos y piernas. Organiza sus partes en grupos.')\"><i class=\"material-icons\">smart_toy</i><span>Crear un robot</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Diseña una espada medieval con hoja, guarda, empuñadura y pomo usando cubos.')\"><i class=\"material-icons\">auto_fix_high</i><span>Diseñar una espada</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Inspecciona el modelo actual y dime cómo están organizados sus elementos.')\"><i class=\"material-icons\">account_tree</i><span>Analizar el modelo</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n        </div>\n      </div>\n\n      <article v-for=\"(message, index) in messages\" :key=\"index\" class=\"bbai-entry\" :class=\"'bbai-entry-' + message.role\">\n        <div class=\"bbai-entry-meta\">\n          <span v-if=\"message.role === 'assistant'\" class=\"bbai-entry-avatar\"><i class=\"material-icons\">auto_awesome</i></span>\n          <span v-else class=\"bbai-user-avatar\"><i class=\"material-icons\">person</i></span>\n          <strong>{{ message.role === 'user' ? 'Tú' : 'Blockbench AI' }}</strong>\n        </div>\n        <div class=\"bbai-entry-text\">{{ message.content }}</div>\n      </article>\n      <div v-if=\"busy\" class=\"bbai-active-step\" role=\"status\">\n        <span class=\"bbai-thinking-icon\"><i class=\"material-icons\">auto_awesome</i></span>\n        <div><strong>Trabajando en tu modelo</strong><span>{{ status }}</span></div>\n        <span class=\"bbai-pulse-dot\"></span>\n      </div>\n    </main>\n\n    <div class=\"bbai-bottom\">\n      <div v-if=\"!apiKey\" class=\"bbai-setup-hint\"><i class=\"material-icons\">key</i><span>¿Aún no conectas tu IA?</span><button type=\"button\" @click=\"openSettings()\">Configurar</button></div>\n      <form class=\"bbai-composer\" @submit.prevent=\"send()\">\n        <textarea v-model=\"prompt\" :disabled=\"busy\" @keydown.enter.exact.prevent=\"send()\" placeholder=\"Describe lo que quieres crear...\" rows=\"3\" maxlength=\"4000\" aria-label=\"Mensaje para Blockbench AI\"></textarea>\n        <div class=\"bbai-compose-toolbar\">\n          <span class=\"bbai-compose-tip\"><i class=\"material-icons\">deployed_code</i> Geometría editable</span>\n          <button v-if=\"busy\" class=\"bbai-stop-button\" type=\"button\" @click=\"cancel()\" title=\"Cancelar solicitud\"><i class=\"material-icons\">stop</i> Detener</button>\n          <button v-else class=\"bbai-send-button\" type=\"submit\" :disabled=\"!prompt.trim()\" title=\"Enviar mensaje\" aria-label=\"Enviar mensaje\"><i class=\"material-icons\">arrow_upward</i></button>\n        </div>\n      </form>\n      <div class=\"bbai-footer\"><span>Enter para enviar · Shift + Enter para nueva línea</span><span class=\"bbai-footer-status\"><i class=\"material-icons\">history</i> Undo</span></div>\n    </div>\n  </template>\n</section>";
 
   function makeComponent() {
     const prefs = settingsSnapshot();
