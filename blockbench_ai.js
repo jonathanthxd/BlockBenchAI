@@ -881,7 +881,7 @@
           if (!settled) {settled = true; cleanup(); resolve();}
           return;
         }
-        onProgress('Límite gratuito de Groq: reintentando en ' + Math.ceil(left / 1000) + ' s… (puedes detenerlo)');
+        onProgress('Límite del proveedor: reintentando en ' + Math.ceil(left / 1000) + ' s… (puedes detenerlo)');
         timer = setTimeout(tick, Math.min(1000, left));
       }
       signal.addEventListener('abort', cancel, {once: true});
@@ -942,7 +942,7 @@
         const seconds = retrySeconds(response.headers, detail, retry);
         const delay = Math.min(65000, Math.ceil((seconds + 0.65) * 1000));
         if (retry === MAX_RATE_RETRIES || seconds > 65 || waited + delay > MAX_TOTAL_RATE_WAIT_MS) {
-          fail('Groq ha alcanzado el límite de uso gratuito. Espera a que se renueve tu cuota y vuelve a intentarlo. No necesitas pagar ni cambiar tu API key. Las modificaciones ya aplicadas se conservaron.');
+          fail('El proveedor ha alcanzado su límite de uso gratuito. Espera a que se renueve tu cuota o elige otro proveedor en Ajustes. Las modificaciones ya aplicadas se conservaron.');
         }
         waited += delay;
         await waitForQuota(delay / 1000, signal, onProgress || function () {});
