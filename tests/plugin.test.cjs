@@ -173,7 +173,7 @@ test('AI creates a group and native cubes with Blockbench Undo operations', asyn
   assert.equal(component.messages.at(-1).content, 'Created the robot.');
   assert.equal(host.transactions.filter(t => t.stage === 'finish').length, 2);
   assert.equal(calls.length, 2);
-  assert.ok(JSON.parse(calls[0].options.body).tools.length >= 4);
+  assert.ok(JSON.parse(calls[0].options.body).tools.length <= 2, 'compact tool routing');
 });
 test('AI can edit an existing cube via UUID while preserving other fields', async () => {
   let n = 0;
@@ -464,7 +464,8 @@ test('Groq receives only relevant tools for character prompts to reduce token us
   });
   const v=host.view();v.apiKey='token';v.prompt='Crea un aldeano androide';await v.send();
   assert.ok(toolNames.includes('generate_character'));
-  assert.ok(toolNames.includes('build_painted_model'));
+  assert.ok(toolNames.includes('inspect_scene'));
+  assert.equal(toolNames.length, 2, 'humanoid prompts must not ship the enormous generic paint schema');
   assert.ok(!toolNames.includes('edit_cubes'));
   assert.ok(!toolNames.includes('create_group'));
 });
@@ -479,4 +480,60 @@ test('When editing an existing model, texturing tools are available instead of t
   assert.ok(toolNames.includes('paint_existing_cubes'));
   assert.ok(toolNames.includes('edit_cubes'));
   assert.ok(!toolNames.includes('generate_character'));
+});
+
+
+test('Gemini free provider preset appears in native Settings and in-panel settings', async () => {
+  let requestedEndpoint, requestedModel;
+  const host = makeHost(async (url,opts)=>{
+    requestedEndpoint=url;
+    requestedModel=JSON.parse(opts.body).model;
+    return answer({content:'Gemini conectado'});
+  });
+  assert.equal(host.nativeSettings.bbai_provider.options.gemini,'Google Gemini (gratis)');
+  assert.match(host.panel.component.template,/Google Gemini/);
+  host.nativeSettings.bbai_provider.set('gemini');
+  assert.equal(host.nativeSettings.bbai_model.value,'gemini-3.8-flash');
+  assert.equal(host.nativeSettings.bbai_endpoint.value,'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+  const view=host.view();view.apiKey='gemini-test-token';
+  view.prompt='Hola';await view.send();
+  assert.equal(requestedEndpoint,host.nativeSettings.bbai_endpoint.value);
+  assert.equal(requestedModel,'gemini-3.8-flash');
+});
+test('compact model tool provides a painted model via small nine-item part tuples', async () => {
+  let n=0;
+  const host=makeHost(async ()=>{
+    n++;
+    if(n===1)return answer({tool_calls:[toolCall('compact','compose_model',{
+      name:'Custom Sword',
+      palette:{primary:'#9FABB8',secondary:'#4A3B39',accent:'#4AE3E1'},
+      parts:[
+        ['Long blade',-1,5,-.5,1,19,.5,'metal','primary'],
+        ['Guard',-3,4,-1,3,5,1,'m','accent'],
+        ['Handle',-.5,0,-.5,.5,4,.5,'w','secondary']
+      ]
+    })]});
+    return answer({content:'Espada detallada y pintada.'});
+  });
+  const view=host.view();view.apiKey='local-key';view.prompt='Crea una espada muy detallada';await view.send();
+  assert.equal(host.world.Cube.all.length,3);
+  assert.equal(host.world.Texture.all.length,1);
+  assert.ok(host.world.Cube.all.every(c=>c.faces.north.texture===host.world.Texture.all[0].uuid));
+  assert.equal(view.messages.at(-1).content,'Espada detallada y pintada.');
+});
+test('413 is not retried and suggests a different provider', async () => {
+  let calls=0;
+  const host=makeHost(async ()=>{calls++;return {ok:false,status:413,headers:{get(){return null;}},json:async()=>({error:{message:'Requested 8429 tokens'}})};});
+  const view=host.view();view.apiKey='groq-key';view.prompt='Crea una nave';await view.send();
+  assert.equal(calls,1);
+  assert.match(view.messages.at(-1).content,/Gemini/i);
+  assert.match(view.messages.at(-1).content,/413/);
+});
+test('compact tool schema is sent for objects and keeps Groq request small', async () => {
+  let body;
+  const host=makeHost(async (_url,opts)=>{body=JSON.parse(opts.body);return answer({content:'ok'});});
+  const view=host.view();view.apiKey='groq-key';view.prompt='Crea una espada detallada';await view.send();
+  assert.ok(body);
+  assert.deepEqual(body.tools.map(x=>x.function.name),['compose_model','inspect_scene']);
+  assert.ok(JSON.stringify(body).length<5200);
 });
