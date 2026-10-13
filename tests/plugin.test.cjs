@@ -727,3 +727,13 @@ test('offline prop gallery generates multiple textured models without contacting
   assert.equal(contacted,false);
   assert.match(v.messages.at(-1).content,/Demo local creada/);
 });
+
+test('connection errors redact a just-entered API token even before saving preferences', async () => {
+  const token='cf-custom-token-xyz987654321';
+  const host=makeHost(async ()=>({ok:false,status:401,json:async()=>({error:{message:'Invalid token: '+token}})}));
+  const v=host.view();v.apiKey=token;
+  await v.testConnection();
+  assert.equal(v.connectionResult,'error');
+  assert.match(v.connectionStatus,/401/);
+  assert.ok(!v.connectionStatus.includes(token),'secret must never be shown in error banner');
+});
