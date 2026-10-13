@@ -852,10 +852,10 @@
     if (url.username || url.password || url.hash) fail('API endpoints cannot include credentials or fragments.');
     return url.toString();
   }
-  function safeError(message) {
+  function safeError(message, extraSecret) {
     let out=String(message || 'Error desconocido').slice(0, 640);
     // Providers occasionally return request details in errors. Never echo credentials into chat.
-    for(const secret of [sessionApiKey]){
+    for(const secret of [sessionApiKey,extraSecret]){
       if(secret && secret.length>3)out=out.split(secret).join('[REDACTED]');
     }
     return out
@@ -1099,7 +1099,7 @@
       if (!response.ok) {
         let message='';
         try {const body=await response.json();message=body && body.error && body.error.message || '';}catch(_){}
-        fail('Conexión rechazada ('+response.status+'). '+safeError(message || 'Revisa tu clave, modelo y URL.'));
+        fail('Conexión rechazada ('+response.status+'). '+safeError(message || 'Revisa tu clave, modelo y URL.',config.apiKey));
       }
       const data=await response.json();
       if (!data || !Array.isArray(data.choices) || !data.choices[0] || !data.choices[0].message) {
@@ -1301,7 +1301,7 @@
             this.connectionStatus='Conexión correcta con '+result.model+'. La compatibilidad con herramientas se comprobará al modelar.';
           } catch(error){
             this.connectionResult='error';
-            this.connectionStatus=safeError(error.message || error);
+            this.connectionStatus=safeError(error.message || error, this.apiKey);
           } finally {this.testingConnection=false;}
         },
         saveSettings: function () {
