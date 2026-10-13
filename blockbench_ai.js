@@ -703,6 +703,132 @@
     return buildPaintedModel({name:args.name||'AI Model',parts:parts},budget);
   }
 
+
+  // High-quality deterministic props: all geometry remains individually editable. The model
+  // only supplies an art direction and palette; precise shape math runs locally.
+  const PROP_TOOL = tool('generate_prop',
+    'Preferred tool for swords, energy blades, drones/quads, or treasure chests. Generates a high-detail editable 3D prop with real pixel textures and grouped components.',
+    {
+      name:{type:'string'},
+      kind:{type:'string',enum:['energy_sword','sci_fi_drone','treasure_chest']},
+      primary:{type:'string',description:'Optional #RRGGBB main color'},
+      secondary:{type:'string',description:'Optional #RRGGBB dark color'},
+      accent:{type:'string',description:'Optional #RRGGBB glow or trim color'}
+    },['name','kind']);
+
+  function generateProp(args,budget) {
+    if(!args || !['energy_sword','sci_fi_drone','treasure_chest'].includes(args.kind))fail('Unsupported prop type.');
+    const title=safeName(args.name);
+    const primary=args.primary||'#627B8A',secondary=args.secondary||'#2C3B49',
+      accent=args.accent||'#54DFEC';
+    [primary,secondary,accent].forEach(function(c){rgb(c,'prop palette');});
+    const gold='#DBB768',steel='#AFBCC9',dark='#151F2B',wood='#79543E';
+    const P=[];
+    function p(name,a,b,c,d,e,f,base,mat,trim) {
+      P.push({name:name,from:[a,b,c],to:[d,e,f],
+        paint:{base:base,material:mat||'metal',accent:trim||accent,noise:.065}});
+    }
+    if(args.kind==='energy_sword'){
+      p('Grip | Main',-.85,0,-.7,.85,6,.7,wood,'wood');
+      p('Grip | Core',-.55,1,-.85,.55,5.5,-.7,secondary,'metal');
+      p('Hilt | Pommel',-1.35,-1,-1.0,1.35,.3,1.0,secondary,'metal');
+      p('Hilt | Gem',-.62,-1.25,-1.18,.62,-.1,-.98,accent,'gem');
+      p('Hilt | Collar',-1,5.4,-1,1,6.6,1,steel,'metal');
+      p('Hilt | Guard',-4.8,6,-1.1,4.8,7.3,1.1,secondary,'metal');
+      p('Hilt | Guard Core',-2,6,-1.45,2,7.7,-1.05,gold,'metal');
+      p('Hilt | Center Jewel',-.85,6.3,-1.75,.85,7.6,-1.4,accent,'gem');
+      p('Blade | Body',-1.55,7,-.68,1.55,24.8,.68,steel,'metal');
+      p('Blade | Midrib',-.45,7,-1.0,.45,24.7,-.7,primary,'metal');
+      p('Blade | Tip',-.95,24.7,-.45,.95,27.2,.45,steel,'metal');
+      p('Blade | Tip Crest',-.45,27.1,-.2,.45,28.5,.2,accent,'gem');
+      p('Blade | Core Glow',-.24,8,-1.18,.24,24.4,-.98,accent,'gem');
+      for(const sign of [-1,1]){
+        const label=sign<0?'Left':'Right';
+        const x=sign<0?-1.8:1.55;
+        p(label+' Blade | Edge',x,8,-.43,x+.25,24.3,.43,primary,'metal');
+        p(label+' Blade | Tip Facet',sign<0?-1.14:.95,24.5,-.57,sign<0?-.96:1.13,26.5,.57,gold,'metal');
+        p(label+' Guard | Wing',sign<0?-4.8:2.65,7,-.75,sign<0?-2.6:4.85,8.25,.75,primary,'metal');
+        p(label+' Guard | Cap',sign<0?-5.25:4.55,7.35,-.9,sign<0?-4.5:5.3,8.9,.9,gold,'metal');
+        p(label+' Guard | Highlight',sign<0?-4.7:2.8,7.2,-1.0,sign<0?-2.8:4.7,7.55,-.79,accent,'circuit');
+        for(let i=0;i<4;i++){
+          p(label+' Grip | Binding '+(i+1),sign<0?-1.05:.8,.6+i*1.25,-.91,sign<0?-.8:1.05,1.08+i*1.25,.91,gold,'metal');
+        }
+        for(let i=0;i<4;i++){
+          p(label+' Blade | Rune '+(i+1),sign<0?-1.08:.87,10+i*3,-.79,sign<0?-.67:1.08,10.5+i*3,-.67,accent,'gem');
+        }
+      }
+    } else if(args.kind==='sci_fi_drone'){
+      p('Chassis | Core',-3.4,7,-3.1,3.4,10.7,3.1,primary,'metal');
+      p('Chassis | Top Shell',-3,10.65,-2.75,3,11.65,2.75,secondary,'metal');
+      p('Chassis | Bottom Plate',-3.15,6.45,-2.95,3.15,7.25,2.95,secondary,'metal');
+      p('Chassis | Center Reactor',-1.45,11.6,-1.45,1.45,12.25,1.45,accent,'gem');
+      p('Camera | Front Housing',-1.5,7.4,-4.2,1.5,9.8,-3.05,secondary,'metal');
+      p('Camera | Lens',-.8,7.9,-4.65,.8,9.35,-4.15,accent,'gem');
+      p('Camera | Lens Ring',-1.07,7.65,-4.32,1.07,9.65,-4.1,gold,'metal');
+      p('Power | Battery',-2.05,7,3.1,2.05,9.9,4.25,secondary,'circuit');
+      p('Power | Battery Light',-.65,8,4.2,.65,9.05,4.55,accent,'gem');
+      p('Sensor | Antenna',-.19,11.5,1.5,.19,13.95,1.9,steel,'metal');
+      p('Sensor | Antenna Tip',-.65,13.75,1.05,.65,14.55,2.35,accent,'gem');
+      for(const xs of [-1,1])for(const zs of [-1,1]){
+        const tag=(xs<0?'L':'R')+(zs<0?'F':'B');
+        const ax=xs*7, az=zs*7;
+        p(tag+' Arm | Beam',Math.min(xs*2.0,ax)-.55,8,Math.min(zs*2.1,az)-.56,
+          Math.max(xs*2.0,ax)+.55,9.25,Math.max(zs*2.1,az)+.56,primary,'metal');
+        p(tag+' Motor | Housing',ax-1.6,8.0,az-1.6,ax+1.6,10.7,az+1.6,secondary,'metal');
+        p(tag+' Motor | Core',ax-.7,10.6,az-.7,ax+.7,11.4,az+.7,accent,'gem');
+        p(tag+' Rotor | Hub',ax-.65,11.4,az-.65,ax+.65,12,az+.65,steel,'metal');
+        p(tag+' Rotor | Blade X',ax-3,11.9,az-.28,ax+3,12.2,az+.28,steel,'metal');
+        p(tag+' Rotor | Blade Z',ax-.28,11.9,az-3,ax+.28,12.2,az+3,steel,'metal');
+        p(tag+' Rotor | Blade Tip A',ax-3.3,11.83,az-.4,ax-2.7,12.27,az+.4,accent,'gem');
+        p(tag+' Rotor | Blade Tip B',ax+2.7,11.83,az-.4,ax+3.3,12.27,az+.4,accent,'gem');
+        p(tag+' Landing | Strut',ax-.28,4.7,az-.28,ax+.28,8.2,az+.28,dark,'metal');
+        p(tag+' Landing | Foot',ax-1.5,4.3,az-1.0,ax+1.5,4.9,az+1,secondary,'metal');
+      }
+      for(let i=0;i<4;i++){
+        const x=-2.3+i*1.5;
+        p('Chassis | Vent '+i,x,9,-3.3,x+.7,9.5,-3.1,dark,'circuit');
+        p('Chassis | Trim '+i,x,10.7,-3.0,x+.7,10.85,-2.7,gold,'metal');
+      }
+    } else {
+      p('Body | Base',-7.5,0,-4.5,7.5,7,4.5,wood,'wood');
+      p('Body | Upper Lid',-8.1,6,-5.1,8.1,10.5,5.1,wood,'wood');
+      p('Body | Lid Top',-8.1,10.3,-5.1,8.1,11.2,5.1,primary,'metal');
+      p('Lock | Housing',-2.1,4,-5.65,2.1,8.4,-4.5,gold,'metal');
+      p('Lock | Keyhole',-.52,5,-5.8,.52,6.8,-5.55,dark,'plain');
+      p('Lock | Core Gem',-.9,7,-5.88,.9,8.2,-5.7,accent,'gem');
+      for(const side of [-1,1]){
+        const x=side<0?-8.4:7.6;
+        const tag=side<0?'Left':'Right';
+        p(tag+' Edge | Vertical',x,.1,-5.3,x+.8,10.8,5.3,gold,'metal');
+        p(tag+' Edge | Top Corner',x,10.3,-5.4,x+.8,11.5,5.4,primary,'metal');
+        p(tag+' Hinge | Housing',x,7.4,4.3,x+.8,10.4,5.3,secondary,'metal');
+        for(let i=0;i<3;i++){
+          p(tag+' Rivet | Front '+i,x+.1,1.6+i*3,-5.7,x+.7,2.2+i*3,-5.3,steel,'metal');
+        }
+      }
+      for(const sign of [-1,1]){
+        const z=sign<0?-5.15:4.35;
+        const side=sign<0?'Front':'Back';
+        for(let i=0;i<3;i++){
+          const y=1.15+i*3.0;
+          p(side+' Trim | Horizontal '+i,-8.2,y,z,8.2,y+.48,z+.8,primary,'metal');
+        }
+        for(let x=-6;x<=6;x+=3){
+          p(side+' Rivet | X'+x,x-.3,7.5,z-.2,x+.3,8.1,z+.2,gold,'metal');
+        }
+      }
+      for(let i=0;i<4;i++){
+        const x=-6.4+i*4;
+        p('Lid | Steel Strap '+i,x,7.2,-5.3,x+.8,11.5,5.3,secondary,'metal');
+        p('Lid | Gold Inlay '+i,x+.1,10.8,-5.2,x+.7,11.4,5.2,gold,'metal');
+      }
+      p('Base | Foot Left',-7.2,-1,-3.7,-5.6,0.1,3.7,dark,'stone');
+      p('Base | Foot Right',5.6,-1,-3.7,7.2,0.1,3.7,dark,'stone');
+    }
+    if(P.length>MAX_PAINTED_PARTS)fail('Generator exceeded max textured parts ('+P.length+').');
+    return buildPaintedModel({name:title,parts:P},budget);
+  }
+
   function runTool(name, args, budget) {
     if (Project !== budget.project) fail('Project changed during this request. Stopping to protect your work.');
     if (name === 'inspect_scene') return scene(args);
@@ -713,6 +839,7 @@
     if (name === 'paint_existing_cubes') return paintExistingCubes(args || {});
     if (name === 'generate_character') return detailedHumanoid(args || {}, budget);
     if (name === 'compose_model') return composeModel(args || {}, budget);
+    if (name === 'generate_prop') return generateProp(args || {}, budget);
     fail('Unknown tool: ' + name);
   }
 
@@ -855,6 +982,7 @@
   function systemPrompt() {
     return 'You are BlockbenchAI, a native editable 3D modeler. Use real tools; never claim unexecuted work. '+
       'For humanoids/villagers/androids/robots ALWAYS call generate_character to create a polished, textured base. '+
+      'For swords, chests and sci-fi drones use generate_prop for detailed procedural geometry and pixel materials. '+
       'For all other NEW creations call compose_model: up to 96 named parts (name,fromXYZ,toXYZ,materialCode,paletteName), material and atlas painted locally. '+
       'Prefer a strong silhouette, layered geometric components, deliberate 3D detailing and coherent palette. Front=-Z. '+
       'For existing models inspect first, then edit by UUID or paint existing cubes. Do not destroy unrelated parts. '+
@@ -917,10 +1045,12 @@
 
   function selectTools(prompt, populated, advanced) {
     const lower=String(prompt||'').toLowerCase();
+    const prop=/(espada|sword|katana|blade|dron|drone|quadcop|cofre|chest|baúl|baul)/i.test(lower);
     const character=/(aldean|villager|androide|android|robot|personaje|character|humanoid|humano|caballero|knight|golem)/i.test(lower);
     const edit=populated&&/(modifica|modificar|cambia|cambiar|ajusta|ajustar|editar|edita|pinta|pintar|repinta|repaint|modify|change|color|textur|extend|alarga|mejora|improve)/i.test(lower);
     // No huge nested paint schema unless the user explicitly asks for a repaint.
     if(edit) return TOOLS.filter(function(t){return ['inspect_scene','edit_cubes','paint_existing_cubes'].includes(t.function.name);});
+    if(prop) return [PROP_TOOL,TOOLS.find(t=>t.function.name==='inspect_scene')];
     if(character) return advanced ? [TOOLS.find(t=>t.function.name==='generate_character'),COMPACT_TOOL,TOOLS.find(t=>t.function.name==='inspect_scene')] : TOOLS.filter(function(t){return ['generate_character','inspect_scene'].includes(t.function.name);});
     return [COMPACT_TOOL, TOOLS.find(function(t){return t.function.name==='inspect_scene';})];
   }
