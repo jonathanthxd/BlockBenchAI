@@ -1148,6 +1148,34 @@
     fail('No fue posible completar la solicitud con la cuota disponible.');
   }
 
+
+  function sceneRevisionSignature() {
+    // Detect concurrent human edits while waiting on the network. We deliberately do not
+    // lock the UI; instead we refuse to apply stale AI results to a modified scene.
+    let hash=2166136261;
+    function add(value) {
+      const s=String(value);
+      for(let i=0;i<s.length;i++){hash^=s.charCodeAt(i);hash=Math.imul(hash,16777619)>>>0;}
+    }
+    add(Project && Project.uuid || 'unknown');
+    add(Format && Format.id || 'unknown');
+    add(cubes().length);
+    for(const c of cubes()){
+      add(c.uuid);add(c.name);
+      add((c.from||[]).join(','));add((c.to||[]).join(','));
+      add((c.origin||[]).join(','));add((c.rotation||[]).join(','));
+      add(c.parent && c.parent.uuid || 'root');
+      add(c.locked);add(c.selected);
+    }
+    add(groups().length);
+    for(const g of groups()){add(g.uuid);add(g.name);add(g.parent&&g.parent.uuid||'root');}
+    if(typeof Texture !== 'undefined' && Texture.all){
+      add(Texture.all.length);
+      for(const t of Texture.all){add(t.uuid);add(t.name);add(t.width);add(t.height);add(t.source&&t.source.length);}
+    }
+    return hash>>>0;
+  }
+
   async function perform(prompt, config, onProgress, signal) {
     const project = activeProject();
     const endpoint = validateEndpoint(config.endpoint);
@@ -1174,8 +1202,10 @@
         ...rounds.slice(-1).flat()
       ];
       const availableTools=selectTools(prompt,context.totals.cubes>0,endpoint===GEMINI_ENDPOINT);
+      const beforeRevision=sceneRevisionSignature();
       const reply = await requestCompletion(endpoint, model, config.apiKey, messages, signal, onProgress, availableTools);
       if (signal.aborted || Project !== project) fail('Solicitud cancelada o el proyecto ha cambiado.');
+      if (beforeRevision!==sceneRevisionSignature()) fail('Detecté cambios manuales en el proyecto mientras la IA respondía. No apliqué operaciones desactualizadas. Vuelve a enviar la solicitud para trabajar con el modelo actualizado.');
       const calls = reply.tool_calls || [];
       if (!calls.length) return String(reply.content || (budget.toolCalls ? 'Se aplicaron cambios al modelo.' : 'No se realizaron cambios.'));
       if (budget.toolCalls + calls.length > MAX_TOOL_CALLS) fail('Se alcanzó el límite de herramientas. Los cambios realizados siguen disponibles en el historial de deshacer.');
