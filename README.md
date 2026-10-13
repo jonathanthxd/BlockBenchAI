@@ -2,9 +2,15 @@
 
 **BlockBenchAI** is an independent, MIT-licensed AI modeling assistant for [Blockbench](https://www.blockbench.net/). Write a prompt in the dockable chat panel to create or modify **real, editable Blockbench cubes and groups**.
 
-> **Version 0.2.0 — experimental public test.** JavaScript syntax and mocked Blockbench integration are checked in GitHub Actions. Real Blockbench Desktop behavior still requires in-app testing.
+> **Version 0.2.1 — experimental public test.** JavaScript syntax and mocked Blockbench integration are checked in GitHub Actions. Real Blockbench Desktop behavior still requires in-app testing.
 
-## What's new in v0.2
+## What's new in v0.2.1
+
+- **Automatic Groq 429 recovery:** when its free tokens-per-minute quota is temporarily reached, the assistant reads `Retry-After` or the API response, displays a countdown, then retries up to four times. Use **Detener** to cancel immediately. If a quota does not reset soon, it shows a friendly message instead of waiting indefinitely.
+- **Lower token usage:** sends a smaller project snapshot and recent conversation history and retains only the most recent tool exchanges. Geometry remains editable and the active project is inspected again at each step.
+- You do **not** need to upgrade to a paid Groq plan for temporary rate limits. No software can bypass the service's quota.
+
+## Previously added in v0.2
 
 - **Fixed empty plugin Settings tab.** Provider, model, endpoint and a **Configure API key** action now register through Blockbench's native Setting API, so they appear under **Plugins → Blockbench AI → Settings**.
 - Redesigned dockable assistant: cleaner typography, provider settings, refined messages, active progress, quick prompts, contextual project bar, and easier navigation.
@@ -62,7 +68,7 @@ This is an early modeling prototype, **not** an all-format AI 3D asset generator
 
 The endpoint uses the **OpenAI Chat Completions tool calling format**. Endpoints without this API format are not supported. Remote endpoints must use HTTPS; localhost may use HTTP.
 
-If the screen appears outdated after reinstalling, verify the plugin shows **v0.2** in the chat tab and that the old local plugin has been disabled.
+If the screen appears outdated after reinstalling, verify the plugin shows **v0.2.1** in the chat tab and that the old local plugin has been disabled.
 
 ## Testing and contributing
 
