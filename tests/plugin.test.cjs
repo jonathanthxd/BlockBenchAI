@@ -596,3 +596,16 @@ test('Gemini character mode exposes a compact refinement tool in addition to the
   const v=host.view();v.apiKey='test-gemini';v.prompt='Crea un androide detallado';await v.send();
   assert.deepEqual(tools,['generate_character','compose_model','inspect_scene']);
 });
+
+test('offline quality demo creates detailed painted geometry without network calls or an API key', () => {
+  let contacted=false;
+  const host=makeHost(async ()=>{contacted=true;return answer({content:'not used'});});
+  const view=host.view();
+  assert.match(host.panel.component.template,/Demo local · Sin IA/);
+  view.generateLocalDemo();
+  assert.equal(contacted,false);
+  assert.ok(host.world.Cube.all.length>=75);
+  assert.equal(host.world.Texture.all.length,1);
+  assert.match(view.messages.at(-1).content,/Demo local creada/);
+  assert.match(view.messages.at(-1).content,/Ctrl\+Z/);
+});
