@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.0 FORGE — modular TypeScript, Geometry/Texture engines, 8 benchmarks
+
+- New modular TypeScript sources under `src/` (9 modules) with a
+  reproducible zero-dependency bundler (`scripts/build.mjs`, documented in
+  `docs/BUILD.md`) producing the single installable `blockbench_ai.js`.
+- Geometry Engine: `mirror_cubes` (symmetry, in-place or copy),
+  `repeat_array` (linear repetition), `transform_selection`
+  (translate + center-based scale), `organize_hierarchy` (nested groups,
+  validated moves, cycle protection, empty-group cleanup) and
+  `extrude_profile` (convex XZ polygon swept along Y into editable boxes;
+  concave profiles rejected with an explanation). All mutations use
+  orphan-safe transactions: any failure removes created cubes, groups and
+  textures before cancelling the Undo edit.
+- Texture Engine: `retouch_cubes` performs incremental repaints — untouched
+  atlas tiles are preserved bit-for-bit (bitmap copy via `drawImage` when
+  available, deterministic repaint otherwise) inside a single Undo
+  transaction with full rollback.
+- AI agent: intent classification with frozen legacy tool routing, refinement
+  mode (inspect-first, quarter geometry budget), UTF-8 token estimates with
+  the Groq free-tier preflight guard, and stale-edit protection.
+- UX: honest work states (working/painting/retry/cancelled/error/done),
+  step progress, human-readable operation log, and an 8-benchmark picker
+  (knight, crystal golem and mech walker are new; humanoid/prop sculpt data
+  is unchanged from the verified 0.5.x builders).
+- Quality: 63 automated tests (43 legacy + 20 FORGE) green; `npm run check`
+  rebuilds, syntax-checks and tests in one command.
+
+**Testing:** mocked Blockbench host exercises registration, routing,
+providers, geometry ops, incremental paint, Undo transactions, orphan
+cleanup and all 8 benchmarks. Desktop visual QA checklist in
+`docs/BENCHMARKS.md`; in-app Blockbench verification remains necessary.
+
 ## 0.5.1 — Offline demo commands and discoverability
 
 - Fixed `Demo Dron` typed into chat being sent to the remote AI instead of the local model generator.

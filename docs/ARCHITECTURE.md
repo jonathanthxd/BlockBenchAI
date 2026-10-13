@@ -52,3 +52,24 @@ Priorities for future work (not implemented here):
 ## Compliance and distribution
 
 The official Blockbench plugin catalog does not currently accept generative-AI plugins. This is a third-party GitHub project with an MIT license and a publicly installable standalone JS plugin.
+
+## FORGE (0.6.0) — modular sources
+
+The single-file entry point is now a build artifact. Authoritative sources:
+
+```text
+src/types.ts      shared contracts, limits, Blockbench host declarations
+src/validate.ts   validation guards for geometry and paint specs
+src/geometry.ts   Geometry Engine: transactions, hierarchy, symmetry,
+                  repetition, transforms, convex extrusion
+src/texture.ts    Texture Engine: PNG atlases, UV mapping, incremental retouch
+src/presets.ts    8 deterministic benchmark part builders
+src/agent.ts      intent planning, tool budgets, token estimates, history
+src/providers.ts  Cloudflare/Gemini/Groq/OpenAI transport, retries, redaction
+src/ui.ts         copilot panel: states, progress, op log, demos, benchmarks
+src/main.ts       tool registry, generators, agent loop, plugin registration
+```
+
+`npm run build` concatenates them (in order) into `blockbench_ai.js` after
+stripping type-level syntax; see `docs/BUILD.md` for the supported subset.
+`npm run check` rebuilds, syntax-checks and runs all 63 tests.

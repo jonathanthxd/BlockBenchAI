@@ -2,7 +2,7 @@
 
 **An experimental, open-source AI copilot that models inside Blockbench.** Create editable geometry, generate painted PNG atlases, and refine projects using a dockable chat. No bundled paid subscription and no backend account required.
 
-**Current version: 0.5.1** · [MIT License](LICENSE) · **Desktop-first** · [Español](docs/README.es.md)
+**Current version: 0.6.0 FORGE** · [MIT License](LICENSE) · **Desktop-first** · [Español](docs/README.es.md)
 
 > The native Blockbench UI and provider integration still need hands-on verification on users' machines. Passing mocked integration tests does not guarantee all Blockbench model formats, GPUs, export codecs or providers will behave identically.
 
