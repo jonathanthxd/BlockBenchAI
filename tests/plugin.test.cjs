@@ -418,7 +418,7 @@ test('AI can paint existing cube pixels without modifying geometry', async () =>
   assert.deepEqual(Array.from(cube.to),[3,8,3]);
   assert.equal(host.world.Texture.all.length,1);
   assert.equal(cube.faces.north.texture,host.world.Texture.all[0].uuid);
-  assert.ok(host.canvases[0].commands.some(cmd=>cmd.color==='#FFEEDD'));
+  assert.ok(host.canvases[0].commands.some(cmd=>cmd.color.toLowerCase()==='#ffeedd'));
 });
 test('build_painted_model rejects unsafe hex color before any model mutation', async () => {
   let n=0, result;
@@ -454,4 +454,29 @@ test('different painted cubes receive separate face tiles and exported color dat
   assert.equal(host.world.Cube.all.length,2);
   assert.notDeepEqual(host.world.Cube.all[0].faces.north.uv,host.world.Cube.all[1].faces.north.uv);
   assert.ok(host.canvases[0].commands.some(cmd=>/^#/.test(cmd.color)));
+});
+
+test('Groq receives only relevant tools for character prompts to reduce token usage', async () => {
+  let toolNames;
+  const host=makeHost(async (_url,request)=>{
+    toolNames=JSON.parse(request.body).tools.map(t=>t.function.name);
+    return answer({content:'Listo'});
+  });
+  const v=host.view();v.apiKey='token';v.prompt='Crea un aldeano androide';await v.send();
+  assert.ok(toolNames.includes('generate_character'));
+  assert.ok(toolNames.includes('build_painted_model'));
+  assert.ok(!toolNames.includes('edit_cubes'));
+  assert.ok(!toolNames.includes('create_group'));
+});
+test('When editing an existing model, texturing tools are available instead of the character generator', async () => {
+  let toolNames;
+  const host=makeHost(async (_url,request)=>{
+    toolNames=JSON.parse(request.body).tools.map(t=>t.function.name);
+    return answer({content:'Entendido'});
+  });
+  new host.world.Cube({name:'body'}).init();
+  const v=host.view();v.apiKey='token';v.prompt='Pinta el androide de azul';await v.send();
+  assert.ok(toolNames.includes('paint_existing_cubes'));
+  assert.ok(toolNames.includes('edit_cubes'));
+  assert.ok(!toolNames.includes('generate_character'));
 });
