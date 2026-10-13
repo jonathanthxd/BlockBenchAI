@@ -10,7 +10,8 @@ types -> validate -> geometry -> texture -> presets -> agent -> providers -> ui 
 
 Run `npm run build` (Node 20+, no `npm install` needed). The output is
 deterministic: identical sources always produce byte-identical output
-(the header embeds only the package version and the git hash).
+(the header embeds only the package version, so rebuilding leaves the
+working tree clean).
 
 ## Why a custom transpiler
 
