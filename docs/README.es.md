@@ -2,7 +2,7 @@
 
 **BlockBenchAI** es un plugin gratuito de código abierto para Blockbench. Incluye un chat nativo que utiliza modelos de IA externos para crear y modificar geometrías editables, generar texturas PNG por procedimientos y organizar componentes del modelo.
 
-La **versión 0.5.0** continúa siendo experimental. Las pruebas automáticas simulan Blockbench y no sustituyen las pruebas con la aplicación real.
+La **versión 0.5.1** continúa siendo experimental. Las pruebas automáticas simulan Blockbench y no sustituyen las pruebas con la aplicación real.
 
 ## Instalación
 
@@ -10,6 +10,12 @@ La **versión 0.5.0** continúa siendo experimental. Las pruebas automáticas si
 2. Desinstala la versión anterior y **reinicia Blockbench**.
 3. En Blockbench Desktop 5.x, carga el archivo desde el administrador de plugins o arrástralo al editor.
 4. Crea un proyecto **Generic Model** y abre el panel **Blockbench AI**.
+
+## Corrección 0.5.1 — «Demo Dron» sin API key
+
+Puedes escribir **`Demo Dron`** directamente en el chat o pulsar **Demos → Dron**. Ambos caminos generan el modelo **localmente y sin conexión a una IA**. También funcionan `Demo Espada`, `Demo Androide` y `Demo Cofre`.
+
+Si el chat ya tiene mensajes, el menú **Demos** sigue disponible sobre el historial. Si ves un error solicitando una API key, confirma primero que instalaste **v0.5.1**; la v0.5.0 interpretaba las instrucciones escritas como prompts remotos.
 
 ## Probar sin pagar nada y sin API key
 
