@@ -61,7 +61,7 @@ function makeHost(fetchImpl) {
   const component = panel.component;
   function view() {
     const state = Object.assign(component.data(), {
-      $refs: {}, $nextTick(callback) {callback();}
+      $refs: {}, $nextTick(callback) {callback.call(this);}
     });
     for (const [key, value] of Object.entries(component.methods)) state[key] = value.bind(state);
     return state;
