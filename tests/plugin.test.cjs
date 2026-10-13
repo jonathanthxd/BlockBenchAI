@@ -537,3 +537,36 @@ test('compact tool schema is sent for objects and keeps Groq request small', asy
   assert.deepEqual(body.tools.map(x=>x.function.name),['compose_model','inspect_scene']);
   assert.ok(JSON.stringify(body).length<5200);
 });
+
+test('detailed android has quality finish pass and organized native outliner subgroups', async () => {
+  let n=0;
+  const host=makeHost(async ()=>{
+    n++;
+    if(n===1)return answer({tool_calls:[toolCall('decorated','generate_character',{name:'Android',style:'android_villager'})]});
+    return answer({content:'Listo'});
+  });
+  const view=host.view();view.apiKey='dummy';view.prompt='Crea un aldeano androide';await view.send();
+  assert.ok(host.world.Cube.all.length>=75,'minimum detailed character part count');
+  assert.ok(host.world.Group.all.length>5,'model hierarchy should contain organized subgroups');
+  const names=host.world.Cube.all.map(x=>x.name);
+  for(const expected of ['Face | Left Lens','Face | Right Lens','Chest | Collar Left','Left | Knee Emblem','Right | Wrist Indicator']) {
+    assert.ok(names.includes(expected),'missing detail '+expected);
+  }
+  const head=host.world.Cube.all.find(x=>x.name==='Head | Skull');
+  assert.equal(head.parent.name,'Head');
+  assert.ok(head.parent.parent.name==='Android');
+  assert.equal(host.world.Texture.all.length,1);
+  assert.equal(host.transactions.filter(t=>t.stage==='finish').length,1);
+});
+test('tool contract exposes compact nine-element parts instead of full per-face mark schemas', async () => {
+  let tools;
+  const host=makeHost(async (_url,opts)=>{
+    tools=JSON.parse(opts.body).tools;return answer({content:'OK'});
+  });
+  const view=host.view();view.apiKey='token';view.prompt='Crea una locomotora detallada';await view.send();
+  assert.equal(tools[0].function.name,'compose_model');
+  const schema=tools[0].function.parameters.properties.parts;
+  assert.equal(schema.items.maxItems,9);
+  assert.equal(schema.maxItems,96);
+  assert.ok(!JSON.stringify(tools).includes('faceMarkSchema'),'must not send huge pixel markup schema');
+});
