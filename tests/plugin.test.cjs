@@ -14,6 +14,9 @@ function makeHost(fetchImpl) {
   let plugin = null;
   let panel = null;
   let unloaded = {panel: false, action: false, css: false};
+  const nativeSettings = {};
+  let keyDialog = null;
+  let savedSettings = 0;
   class Cube {
     static all = [];
     static selected = [];
@@ -36,8 +39,30 @@ function makeHost(fetchImpl) {
     addTo(group) {this.parent = group === 'root' ? null : group; return this;}
     remove() {Group.all = Group.all.filter(g => g !== this);}
   }
+  class Setting {
+    constructor(id, options) {
+      this.id = id;
+      this.value = options.value;
+      this.plugin = options.plugin;
+      this.type = options.type;
+      this.options = options.options;
+      this.click = options.click;
+      this.onChange = options.onChange;
+      nativeSettings[id] = this;
+    }
+    set(value) {
+      this.value = value;
+      savedSettings++;
+      if (this.onChange) this.onChange(value);
+    }
+    delete() {delete nativeSettings[this.id];}
+  }
+  class Dialog {
+    constructor(id, options) {this.id = id; this.options = options; keyDialog = this;}
+    show() {return this;}
+  }
   const world = {
-    Cube, Group,
+    Cube, Group, Setting, Dialog,
     Project: {uuid: 'project-1', name: 'Test project'},
     Format: {id: 'free', cubes: true, meshes: true},
     Plugin: {register(id, cfg) {assert.equal(id, 'blockbench_ai'); plugin = cfg;}},
@@ -66,7 +91,7 @@ function makeHost(fetchImpl) {
     for (const [key, value] of Object.entries(component.methods)) state[key] = value.bind(state);
     return state;
   }
-  return {world, panel, plugin, view, transactions, unloaded, notifications};
+  return {world, panel, plugin, view, transactions, unloaded, notifications, nativeSettings, getKeyDialog: () => keyDialog, getSavedSettings: () => savedSettings};
 }
 const toolCall = (id, name, args) => ({id, type: 'function', function: {name, arguments: JSON.stringify(args)}});
 function answer(message) {
@@ -76,7 +101,10 @@ test('registers a native docked panel and cleans up on unload', () => {
   const host = makeHost(async () => answer({content: 'ok'}));
   assert.equal(host.panel.default_position.slot, 'right_bar');
   assert.equal(host.plugin.variant, 'desktop');
+  assert.equal(Object.keys(host.nativeSettings).length, 4);
+  for (const setting of Object.values(host.nativeSettings)) assert.equal(setting.plugin, 'blockbench_ai');
   host.plugin.onunload();
+  assert.equal(Object.keys(host.nativeSettings).length, 0);
   assert.deepEqual(host.unloaded, {panel: true, action: true, css: true});
 });
 test('AI creates a group and native cubes with Blockbench Undo operations', async () => {
@@ -178,4 +206,68 @@ test('localhost OpenAI-compatible endpoints do not need an API key', async () =>
   view.prompt = 'hello';
   await view.send();
   assert.equal(view.messages.at(-1).content, 'Hello from the local model.');
+});
+
+
+test('native plugin Settings section has provider, model, endpoint and session key action', () => {
+  const host = makeHost(async () => answer({content: 'ok'}));
+  const s = host.nativeSettings;
+  assert.equal(s.bbai_provider.type, 'select');
+  assert.equal(s.bbai_model.type, 'text');
+  assert.equal(s.bbai_endpoint.type, 'text');
+  assert.equal(s.bbai_session_key.type, 'click');
+  assert.equal(s.bbai_provider.value, 'groq');
+  assert.equal(s.bbai_model.value, 'openai/gpt-oss-120b');
+  assert.equal(s.bbai_endpoint.value, 'https://api.groq.com/openai/v1/chat/completions');
+  s.bbai_session_key.click();
+  const dialog = host.getKeyDialog();
+  assert.equal(dialog.options.form.key.type, 'password');
+  dialog.options.onConfirm({key: 'private-session-token'});
+  assert.equal(host.getSavedSettings(), 0, 'session key is never stored in native settings');
+  assert.equal(host.nativeSettings.bbai_session_key.value, undefined);
+});
+test('saving in-panel configuration synchronizes real plugin preferences', () => {
+  const host = makeHost(async () => answer({content: 'ok'}));
+  const view = host.view();
+  view.provider = 'openai';
+  view.endpoint = 'https://api.openai.com/v1/chat/completions';
+  view.model = 'gpt-4.1-mini';
+  view.apiKey = 'private';
+  view.saveSettings();
+  assert.equal(host.nativeSettings.bbai_provider.value, 'openai');
+  assert.equal(host.nativeSettings.bbai_endpoint.value, view.endpoint);
+  assert.equal(host.nativeSettings.bbai_model.value, view.model);
+  assert.equal(view.view, 'chat');
+  assert.equal(host.nativeSettings.bbai_session_key.value, undefined);
+  view.openSettings();
+  assert.equal(view.view, 'settings');
+  assert.equal(view.model, 'gpt-4.1-mini');
+});
+test('changing provider selects Groq defaults and offers a polished settings view', () => {
+  const host = makeHost(async () => answer({content: 'ok'}));
+  const view = host.view();
+  view.provider = 'openai';
+  view.changeProvider();
+  assert.equal(view.model, 'gpt-4.1-mini');
+  view.provider = 'groq';
+  view.changeProvider();
+  assert.equal(view.model, 'openai/gpt-oss-120b');
+  assert.match(host.panel.component.template, /bbai-settings-view/);
+  assert.match(host.panel.component.template, /bbai-welcome/);
+  assert.match(host.panel.component.template, /useSuggestion/);
+});
+test('native Settings changes update actual request provider without manual panel refresh', async () => {
+  let targetURL, model;
+  const host = makeHost(async (url, request) => {
+    targetURL = url;
+    model = JSON.parse(request.body).model;
+    return answer({content: 'connected'});
+  });
+  const view = host.view();
+  view.apiKey = 'session-test-key';
+  host.nativeSettings.bbai_provider.set('openai');
+  view.prompt = 'Hello';
+  await view.send();
+  assert.equal(targetURL, 'https://api.openai.com/v1/chat/completions');
+  assert.equal(model, 'gpt-4.1-mini');
 });
