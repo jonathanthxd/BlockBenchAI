@@ -1,9 +1,9 @@
-/* Blockbench AI 0.4.0 — MIT License, github.com/jonathanthxd/BlockBenchAI */
+/* Blockbench AI 0.5.0 — MIT License, github.com/jonathanthxd/BlockBenchAI */
 (function () {
   'use strict';
 
   const ID = 'blockbench_ai';
-  const VERSION = '0.4.0';
+  const VERSION = '0.5.0';
   const DEFAULT_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
   const STORAGE_KEY = 'blockbench_ai_preferences_v1';
   const MAX_CUBES_PER_CALL = 32;
@@ -20,6 +20,7 @@
   let sessionApiKey = '';
   const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
   const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+  const CLOUDFLARE_MODEL = '@cf/qwen/qwen3.8-27b';
 
   const vectorSchema = {type: 'array', items: {type: 'number'}, minItems: 3, maxItems: 3};
   const cubeSchema = {
@@ -702,6 +703,132 @@
     return buildPaintedModel({name:args.name||'AI Model',parts:parts},budget);
   }
 
+
+  // High-quality deterministic props: all geometry remains individually editable. The model
+  // only supplies an art direction and palette; precise shape math runs locally.
+  const PROP_TOOL = tool('generate_prop',
+    'Preferred tool for swords, energy blades, drones/quads, or treasure chests. Generates a high-detail editable 3D prop with real pixel textures and grouped components.',
+    {
+      name:{type:'string'},
+      kind:{type:'string',enum:['energy_sword','sci_fi_drone','treasure_chest']},
+      primary:{type:'string',description:'Optional #RRGGBB main color'},
+      secondary:{type:'string',description:'Optional #RRGGBB dark color'},
+      accent:{type:'string',description:'Optional #RRGGBB glow or trim color'}
+    },['name','kind']);
+
+  function generateProp(args,budget) {
+    if(!args || !['energy_sword','sci_fi_drone','treasure_chest'].includes(args.kind))fail('Unsupported prop type.');
+    const title=safeName(args.name);
+    const primary=args.primary||'#627B8A',secondary=args.secondary||'#2C3B49',
+      accent=args.accent||'#54DFEC';
+    [primary,secondary,accent].forEach(function(c){rgb(c,'prop palette');});
+    const gold='#DBB768',steel='#AFBCC9',dark='#151F2B',wood='#79543E';
+    const P=[];
+    function p(name,a,b,c,d,e,f,base,mat,trim) {
+      P.push({name:name,from:[a,b,c],to:[d,e,f],
+        paint:{base:base,material:mat||'metal',accent:trim||accent,noise:.065}});
+    }
+    if(args.kind==='energy_sword'){
+      p('Grip | Main',-.85,0,-.7,.85,6,.7,wood,'wood');
+      p('Grip | Core',-.55,1,-.85,.55,5.5,-.7,secondary,'metal');
+      p('Hilt | Pommel',-1.35,-1,-1.0,1.35,.3,1.0,secondary,'metal');
+      p('Hilt | Gem',-.62,-1.25,-1.18,.62,-.1,-.98,accent,'gem');
+      p('Hilt | Collar',-1,5.4,-1,1,6.6,1,steel,'metal');
+      p('Hilt | Guard',-4.8,6,-1.1,4.8,7.3,1.1,secondary,'metal');
+      p('Hilt | Guard Core',-2,6,-1.45,2,7.7,-1.05,gold,'metal');
+      p('Hilt | Center Jewel',-.85,6.3,-1.75,.85,7.6,-1.4,accent,'gem');
+      p('Blade | Body',-1.55,7,-.68,1.55,24.8,.68,steel,'metal');
+      p('Blade | Midrib',-.45,7,-1.0,.45,24.7,-.7,primary,'metal');
+      p('Blade | Tip',-.95,24.7,-.45,.95,27.2,.45,steel,'metal');
+      p('Blade | Tip Crest',-.45,27.1,-.2,.45,28.5,.2,accent,'gem');
+      p('Blade | Core Glow',-.24,8,-1.18,.24,24.4,-.98,accent,'gem');
+      for(const sign of [-1,1]){
+        const label=sign<0?'Left':'Right';
+        const x=sign<0?-1.8:1.55;
+        p(label+' Blade | Edge',x,8,-.43,x+.25,24.3,.43,primary,'metal');
+        p(label+' Blade | Tip Facet',sign<0?-1.14:.95,24.5,-.57,sign<0?-.96:1.13,26.5,.57,gold,'metal');
+        p(label+' Guard | Wing',sign<0?-4.8:2.65,7,-.75,sign<0?-2.6:4.85,8.25,.75,primary,'metal');
+        p(label+' Guard | Cap',sign<0?-5.25:4.55,7.35,-.9,sign<0?-4.5:5.3,8.9,.9,gold,'metal');
+        p(label+' Guard | Highlight',sign<0?-4.7:2.8,7.2,-1.0,sign<0?-2.8:4.7,7.55,-.79,accent,'circuit');
+        for(let i=0;i<4;i++){
+          p(label+' Grip | Binding '+(i+1),sign<0?-1.05:.8,.6+i*1.25,-.91,sign<0?-.8:1.05,1.08+i*1.25,.91,gold,'metal');
+        }
+        for(let i=0;i<4;i++){
+          p(label+' Blade | Rune '+(i+1),sign<0?-1.08:.87,10+i*3,-.79,sign<0?-.67:1.08,10.5+i*3,-.67,accent,'gem');
+        }
+      }
+    } else if(args.kind==='sci_fi_drone'){
+      p('Chassis | Core',-3.4,7,-3.1,3.4,10.7,3.1,primary,'metal');
+      p('Chassis | Top Shell',-3,10.65,-2.75,3,11.65,2.75,secondary,'metal');
+      p('Chassis | Bottom Plate',-3.15,6.45,-2.95,3.15,7.25,2.95,secondary,'metal');
+      p('Chassis | Center Reactor',-1.45,11.6,-1.45,1.45,12.25,1.45,accent,'gem');
+      p('Camera | Front Housing',-1.5,7.4,-4.2,1.5,9.8,-3.05,secondary,'metal');
+      p('Camera | Lens',-.8,7.9,-4.65,.8,9.35,-4.15,accent,'gem');
+      p('Camera | Lens Ring',-1.07,7.65,-4.32,1.07,9.65,-4.1,gold,'metal');
+      p('Power | Battery',-2.05,7,3.1,2.05,9.9,4.25,secondary,'circuit');
+      p('Power | Battery Light',-.65,8,4.2,.65,9.05,4.55,accent,'gem');
+      p('Sensor | Antenna',-.19,11.5,1.5,.19,13.95,1.9,steel,'metal');
+      p('Sensor | Antenna Tip',-.65,13.75,1.05,.65,14.55,2.35,accent,'gem');
+      for(const xs of [-1,1])for(const zs of [-1,1]){
+        const tag=(xs<0?'L':'R')+(zs<0?'F':'B');
+        const ax=xs*7, az=zs*7;
+        p(tag+' Arm | Beam',Math.min(xs*2.0,ax)-.55,8,Math.min(zs*2.1,az)-.56,
+          Math.max(xs*2.0,ax)+.55,9.25,Math.max(zs*2.1,az)+.56,primary,'metal');
+        p(tag+' Motor | Housing',ax-1.6,8.0,az-1.6,ax+1.6,10.7,az+1.6,secondary,'metal');
+        p(tag+' Motor | Core',ax-.7,10.6,az-.7,ax+.7,11.4,az+.7,accent,'gem');
+        p(tag+' Rotor | Hub',ax-.65,11.4,az-.65,ax+.65,12,az+.65,steel,'metal');
+        p(tag+' Rotor | Blade X',ax-3,11.9,az-.28,ax+3,12.2,az+.28,steel,'metal');
+        p(tag+' Rotor | Blade Z',ax-.28,11.9,az-3,ax+.28,12.2,az+3,steel,'metal');
+        p(tag+' Rotor | Blade Tip A',ax-3.3,11.83,az-.4,ax-2.7,12.27,az+.4,accent,'gem');
+        p(tag+' Rotor | Blade Tip B',ax+2.7,11.83,az-.4,ax+3.3,12.27,az+.4,accent,'gem');
+        p(tag+' Landing | Strut',ax-.28,4.7,az-.28,ax+.28,8.2,az+.28,dark,'metal');
+        p(tag+' Landing | Foot',ax-1.5,4.3,az-1.0,ax+1.5,4.9,az+1,secondary,'metal');
+      }
+      for(let i=0;i<4;i++){
+        const x=-2.3+i*1.5;
+        p('Chassis | Vent '+i,x,9,-3.3,x+.7,9.5,-3.1,dark,'circuit');
+        p('Chassis | Trim '+i,x,10.7,-3.0,x+.7,10.85,-2.7,gold,'metal');
+      }
+    } else {
+      p('Body | Base',-7.5,0,-4.5,7.5,7,4.5,wood,'wood');
+      p('Body | Upper Lid',-8.1,6,-5.1,8.1,10.5,5.1,wood,'wood');
+      p('Body | Lid Top',-8.1,10.3,-5.1,8.1,11.2,5.1,primary,'metal');
+      p('Lock | Housing',-2.1,4,-5.65,2.1,8.4,-4.5,gold,'metal');
+      p('Lock | Keyhole',-.52,5,-5.8,.52,6.8,-5.55,dark,'plain');
+      p('Lock | Core Gem',-.9,7,-5.88,.9,8.2,-5.7,accent,'gem');
+      for(const side of [-1,1]){
+        const x=side<0?-8.4:7.6;
+        const tag=side<0?'Left':'Right';
+        p(tag+' Edge | Vertical',x,.1,-5.3,x+.8,10.8,5.3,gold,'metal');
+        p(tag+' Edge | Top Corner',x,10.3,-5.4,x+.8,11.5,5.4,primary,'metal');
+        p(tag+' Hinge | Housing',x,7.4,4.3,x+.8,10.4,5.3,secondary,'metal');
+        for(let i=0;i<3;i++){
+          p(tag+' Rivet | Front '+i,x+.1,1.6+i*3,-5.7,x+.7,2.2+i*3,-5.3,steel,'metal');
+        }
+      }
+      for(const sign of [-1,1]){
+        const z=sign<0?-5.15:4.35;
+        const side=sign<0?'Front':'Back';
+        for(let i=0;i<3;i++){
+          const y=1.15+i*3.0;
+          p(side+' Trim | Horizontal '+i,-8.2,y,z,8.2,y+.48,z+.8,primary,'metal');
+        }
+        for(let x=-6;x<=6;x+=3){
+          p(side+' Rivet | X'+x,x-.3,7.5,z-.2,x+.3,8.1,z+.2,gold,'metal');
+        }
+      }
+      for(let i=0;i<4;i++){
+        const x=-6.4+i*4;
+        p('Lid | Steel Strap '+i,x,7.2,-5.3,x+.8,11.5,5.3,secondary,'metal');
+        p('Lid | Gold Inlay '+i,x+.1,10.8,-5.2,x+.7,11.4,5.2,gold,'metal');
+      }
+      p('Base | Foot Left',-7.2,-1,-3.7,-5.6,0.1,3.7,dark,'stone');
+      p('Base | Foot Right',5.6,-1,-3.7,7.2,0.1,3.7,dark,'stone');
+    }
+    if(P.length>MAX_PAINTED_PARTS)fail('Generator exceeded max textured parts ('+P.length+').');
+    return buildPaintedModel({name:title,parts:P},budget);
+  }
+
   function runTool(name, args, budget) {
     if (Project !== budget.project) fail('Project changed during this request. Stopping to protect your work.');
     if (name === 'inspect_scene') return scene(args);
@@ -712,6 +839,7 @@
     if (name === 'paint_existing_cubes') return paintExistingCubes(args || {});
     if (name === 'generate_character') return detailedHumanoid(args || {}, budget);
     if (name === 'compose_model') return composeModel(args || {}, budget);
+    if (name === 'generate_prop') return generateProp(args || {}, budget);
     fail('Unknown tool: ' + name);
   }
 
@@ -724,8 +852,16 @@
     if (url.username || url.password || url.hash) fail('API endpoints cannot include credentials or fragments.');
     return url.toString();
   }
-  function safeError(message) {
-    return String(message || 'Unknown error').slice(0, 360).replace(/sk-[a-z0-9_-]{8,}/gi, '[REDACTED]');
+  function safeError(message, extraSecret) {
+    let out=String(message || 'Error desconocido').slice(0, 640);
+    // Providers occasionally return request details in errors. Never echo credentials into chat.
+    for(const secret of [sessionApiKey,extraSecret]){
+      if(secret && secret.length>3)out=out.split(secret).join('[REDACTED]');
+    }
+    return out
+      .replace(/\bBearer\s+[a-z0-9._~+/-]{8,}/gi,'Bearer [REDACTED]')
+      .replace(/\b(?:gsk_|sk-|AIza)[a-z0-9_-]{8,}/gi,'[REDACTED]')
+      .replace(/("?(?:api[_-]?key|access[_-]?token|authorization)"?\s*[:=]\s*")([^"]+)(")/gi,'$1[REDACTED]$3');
   }
   function preferences() {
     try {
@@ -740,10 +876,18 @@
 
   // Real Blockbench plugin preferences, displayed in the Plugins > Settings tab.
   // Credentials are deliberately excluded from native preferences: those persist to disk.
+  function validCloudflareAccount(value) {
+    return typeof value === 'string' && /^[a-f0-9]{32}$/i.test(value.trim());
+  }
+  function cloudflareEndpoint(account) {
+    if (!validCloudflareAccount(account)) fail('Introduce un Account ID válido de Cloudflare (32 caracteres hexadecimales).');
+    return 'https://api.cloudflare.com/client/v4/accounts/' + account.trim() + '/ai/v1/chat/completions';
+  }
   function settingsSnapshot() {
     const fallback = preferences();
     return {
       provider: registeredSettings.provider ? String(registeredSettings.provider.value) : 'groq',
+      cloudflareAccount: registeredSettings.cloudflareAccount ? String(registeredSettings.cloudflareAccount.value || '') : '',
       endpoint: registeredSettings.endpoint ? String(registeredSettings.endpoint.value) : fallback.endpoint,
       model: registeredSettings.model ? String(registeredSettings.model.value) : fallback.model
     };
@@ -754,10 +898,12 @@
     if (vm && typeof vm.refreshConfiguration === 'function') vm.refreshConfiguration();
   }
   function storeConfiguration(next) {
-    const endpoint = validateEndpoint(next.endpoint);
+    const provider = ['groq', 'gemini', 'cloudflare', 'openai', 'custom'].includes(next.provider) ? next.provider : 'custom';
+    const account = String(next.cloudflareAccount || '').trim();
+    const endpoint = validateEndpoint(provider === 'cloudflare' ? cloudflareEndpoint(account) : next.endpoint);
     const model = safeName(next.model);
-    const provider = ['groq', 'gemini', 'openai', 'custom'].includes(next.provider) ? next.provider : 'custom';
     if (registeredSettings.provider && registeredSettings.provider.value !== provider) registeredSettings.provider.set(provider);
+    if (registeredSettings.cloudflareAccount && account !== String(registeredSettings.cloudflareAccount.value || '')) registeredSettings.cloudflareAccount.set(account);
     if (registeredSettings.endpoint) registeredSettings.endpoint.set(endpoint);
     if (registeredSettings.model) registeredSettings.model.set(model);
     savePreferences(endpoint, model);
@@ -786,7 +932,7 @@
     registeredSettings.provider = new Setting('bbai_provider', {
       plugin: ID, name: 'Proveedor', type: 'select',
       description: 'Servicio de IA. Groq tiene un plan gratuito sujeto a límites.',
-      value: 'groq', options: {groq: 'Groq', gemini: 'Google Gemini (gratis)', openai: 'OpenAI', custom: 'Personalizado'},
+      value: 'groq', options: {groq: 'Groq', gemini: 'Google Gemini', cloudflare: 'Cloudflare Workers AI (Qwen)', openai: 'OpenAI', custom: 'Personalizado'},
       onChange: function (value) {
         if (value === 'groq') {
           registeredSettings.endpoint.set(GROQ_ENDPOINT);
@@ -794,6 +940,10 @@
         } else if (value === 'gemini') {
           registeredSettings.endpoint.set(GEMINI_ENDPOINT);
           registeredSettings.model.set('gemini-3.8-flash');
+        } else if (value === 'cloudflare') {
+          const acc = registeredSettings.cloudflareAccount && String(registeredSettings.cloudflareAccount.value || '');
+          registeredSettings.endpoint.set(validCloudflareAccount(acc) ? cloudflareEndpoint(acc) : '');
+          registeredSettings.model.set(CLOUDFLARE_MODEL);
         } else if (value === 'openai') {
           registeredSettings.endpoint.set(DEFAULT_ENDPOINT);
           registeredSettings.model.set('gpt-4.1-mini');
@@ -813,6 +963,16 @@
       value: old.model === 'gpt-4.1-mini' ? 'openai/gpt-oss-120b' : old.model,
       onChange: updatePanelSettings
     });
+    registeredSettings.cloudflareAccount = new Setting('bbai_cloudflare_account', {
+      plugin: ID, name: 'Cloudflare Account ID', type: 'text', value: '',
+      description: 'Identificador de cuenta de 32 caracteres. No es una clave privada.',
+      onChange: function (value) {
+        if (registeredSettings.provider && registeredSettings.provider.value === 'cloudflare') {
+          registeredSettings.endpoint.set(validCloudflareAccount(value) ? cloudflareEndpoint(value) : '');
+        }
+        updatePanelSettings();
+      }
+    });
     registeredSettings.key = new Setting('bbai_session_key', {
       plugin: ID, name: 'Configurar API key (solo sesión)', type: 'click', icon: 'key',
       description: 'Abre una ventana segura para introducir la clave. No se guarda en disco.',
@@ -830,6 +990,7 @@
   function systemPrompt() {
     return 'You are BlockbenchAI, a native editable 3D modeler. Use real tools; never claim unexecuted work. '+
       'For humanoids/villagers/androids/robots ALWAYS call generate_character to create a polished, textured base. '+
+      'For swords, chests and sci-fi drones use generate_prop for detailed procedural geometry and pixel materials. '+
       'For all other NEW creations call compose_model: up to 96 named parts (name,fromXYZ,toXYZ,materialCode,paletteName), material and atlas painted locally. '+
       'Prefer a strong silhouette, layered geometric components, deliberate 3D detailing and coherent palette. Front=-Z. '+
       'For existing models inspect first, then edit by UUID or paint existing cubes. Do not destroy unrelated parts. '+
@@ -892,10 +1053,12 @@
 
   function selectTools(prompt, populated, advanced) {
     const lower=String(prompt||'').toLowerCase();
+    const prop=/(espada|sword|katana|blade|dron|drone|quadcop|cofre|chest|baúl|baul)/i.test(lower);
     const character=/(aldean|villager|androide|android|robot|personaje|character|humanoid|humano|caballero|knight|golem)/i.test(lower);
     const edit=populated&&/(modifica|modificar|cambia|cambiar|ajusta|ajustar|editar|edita|pinta|pintar|repinta|repaint|modify|change|color|textur|extend|alarga|mejora|improve)/i.test(lower);
     // No huge nested paint schema unless the user explicitly asks for a repaint.
     if(edit) return TOOLS.filter(function(t){return ['inspect_scene','edit_cubes','paint_existing_cubes'].includes(t.function.name);});
+    if(prop) return [PROP_TOOL,TOOLS.find(t=>t.function.name==='inspect_scene')];
     if(character) return advanced ? [TOOLS.find(t=>t.function.name==='generate_character'),COMPACT_TOOL,TOOLS.find(t=>t.function.name==='inspect_scene')] : TOOLS.filter(function(t){return ['generate_character','inspect_scene'].includes(t.function.name);});
     return [COMPACT_TOOL, TOOLS.find(function(t){return t.function.name==='inspect_scene';})];
   }
@@ -918,6 +1081,37 @@
     const estimated=Math.ceil(bytes/2.8)+900;
     if(estimated>6400)fail('La solicitud es demasiado grande para Groq gratis (aprox. '+estimated+' tokens con margen). Reduce el historial o usa Gemini en Ajustes; no enviaré una petición destinada a fallar con 413.');
   }
+
+  async function checkProviderConnection(config) {
+    const endpoint = validateEndpoint(config.provider === 'cloudflare' ? cloudflareEndpoint(config.cloudflareAccount) : config.endpoint);
+    const model = safeName(config.model);
+    const localHost = /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/.test(new URL(endpoint).hostname);
+    if (!config.apiKey && !localHost) fail('La API key es obligatoria. Usa una clave del proveedor elegido.');
+    const controller = new AbortController();
+    const timeout = setTimeout(function () {controller.abort();}, 18000);
+    try {
+      const headers = {'Content-Type':'application/json'};
+      if (config.apiKey) headers.Authorization = 'Bearer ' + config.apiKey;
+      const response = await fetch(endpoint, {
+        method:'POST', headers:headers, signal:controller.signal,
+        body:JSON.stringify({model:model,messages:[{role:'user',content:'Reply with: OK'}],max_tokens:16})
+      });
+      if (!response.ok) {
+        let message='';
+        try {const body=await response.json();message=body && body.error && body.error.message || '';}catch(_){}
+        fail('Conexión rechazada ('+response.status+'). '+safeError(message || 'Revisa tu clave, modelo y URL.',config.apiKey));
+      }
+      const data=await response.json();
+      if (!data || !Array.isArray(data.choices) || !data.choices[0] || !data.choices[0].message) {
+        fail('El servidor respondió, pero no devolvió el formato Chat Completions esperado.');
+      }
+      return {provider:config.provider,model:model};
+    } catch(error) {
+      if (controller.signal.aborted) fail('La comprobación superó el tiempo máximo de conexión (18 segundos).');
+      throw error;
+    } finally {clearTimeout(timeout);}
+  }
+
   async function requestCompletion(endpoint, model, apiKey, messages, signal, onProgress, availableTools) {
     const headers = {'Content-Type': 'application/json'};
     if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
@@ -962,6 +1156,34 @@
     fail('No fue posible completar la solicitud con la cuota disponible.');
   }
 
+
+  function sceneRevisionSignature() {
+    // Detect concurrent human edits while waiting on the network. We deliberately do not
+    // lock the UI; instead we refuse to apply stale AI results to a modified scene.
+    let hash=2166136261;
+    function add(value) {
+      const s=String(value);
+      for(let i=0;i<s.length;i++){hash^=s.charCodeAt(i);hash=Math.imul(hash,16777619)>>>0;}
+    }
+    add(Project && Project.uuid || 'unknown');
+    add(Format && Format.id || 'unknown');
+    add(cubes().length);
+    for(const c of cubes()){
+      add(c.uuid);add(c.name);
+      add((c.from||[]).join(','));add((c.to||[]).join(','));
+      add((c.origin||[]).join(','));add((c.rotation||[]).join(','));
+      add(c.parent && c.parent.uuid || 'root');
+      add(c.locked);add(c.selected);
+    }
+    add(groups().length);
+    for(const g of groups()){add(g.uuid);add(g.name);add(g.parent&&g.parent.uuid||'root');}
+    if(typeof Texture !== 'undefined' && Texture.all){
+      add(Texture.all.length);
+      for(const t of Texture.all){add(t.uuid);add(t.name);add(t.width);add(t.height);add(t.source&&t.source.length);}
+    }
+    return hash>>>0;
+  }
+
   async function perform(prompt, config, onProgress, signal) {
     const project = activeProject();
     const endpoint = validateEndpoint(config.endpoint);
@@ -988,8 +1210,10 @@
         ...rounds.slice(-1).flat()
       ];
       const availableTools=selectTools(prompt,context.totals.cubes>0,endpoint===GEMINI_ENDPOINT);
+      const beforeRevision=sceneRevisionSignature();
       const reply = await requestCompletion(endpoint, model, config.apiKey, messages, signal, onProgress, availableTools);
       if (signal.aborted || Project !== project) fail('Solicitud cancelada o el proyecto ha cambiado.');
+      if (beforeRevision!==sceneRevisionSignature()) fail('Detecté cambios manuales en el proyecto mientras la IA respondía. No apliqué operaciones desactualizadas. Vuelve a enviar la solicitud para trabajar con el modelo actualizado.');
       const calls = reply.tool_calls || [];
       if (!calls.length) return String(reply.content || (budget.toolCalls ? 'Se aplicaron cambios al modelo.' : 'No se realizaron cambios.'));
       if (budget.toolCalls + calls.length > MAX_TOOL_CALLS) fail('Se alcanzó el límite de herramientas. Los cambios realizados siguen disponibles en el historial de deshacer.');
@@ -1017,15 +1241,16 @@
     return 'He alcanzado el límite de pasos. Los cambios realizados se pueden deshacer en Blockbench. Puedes pedirme que continúe.';
   }
 
-  const TEMPLATE = "\n<section class=\"bbai-root\">\n  <header class=\"bbai-topbar\">\n    <div class=\"bbai-identity\">\n      <div class=\"bbai-logomark\"><i class=\"material-icons\">auto_awesome</i></div>\n      <div class=\"bbai-brand\">\n        <strong>Blockbench AI</strong>\n        <span>Tu asistente de modelado</span>\n      </div>\n    </div>\n    <button class=\"bbai-icon-button\" type=\"button\" @click=\"view === 'settings' ? view = 'chat' : openSettings()\" :title=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\" :aria-label=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\">\n      <i class=\"material-icons\">{{ view === 'settings' ? 'close' : 'tune' }}</i>\n    </button>\n  </header>\n  <nav class=\"bbai-tabs\" aria-label=\"Secciones de Blockbench AI\">\n    <button type=\"button\" :class=\"{active: view === 'chat'}\" @click=\"view = 'chat'\"><i class=\"material-icons\">chat_bubble_outline</i> Chat</button>\n    <button type=\"button\" :class=\"{active: view === 'settings'}\" @click=\"openSettings()\"><i class=\"material-icons\">settings</i> Ajustes</button>\n    <span class=\"bbai-version\">v0.4</span>\n  </nav>\n\n  <template v-if=\"view === 'settings'\">\n    <div class=\"bbai-settings-view\">\n      <div class=\"bbai-section-intro\">\n        <div class=\"bbai-section-icon\"><i class=\"material-icons\">tune</i></div>\n        <h3>Configurar IA</h3>\n        <p>Elige tu proveedor y conecta un modelo compatible con herramientas.</p>\n      </div>\n      <div class=\"bbai-config-card\">\n        <label class=\"bbai-field\">\n          <span>Proveedor</span>\n          <select v-model=\"provider\" @change=\"changeProvider\">\n            <option value=\"gemini\">Google Gemini · plan gratuito</option>\n            <option value=\"groq\">Groq · plan gratuito</option>\n            <option value=\"openai\">OpenAI</option>\n            <option value=\"custom\">Personalizado / local</option>\n          </select>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Modelo</span>\n          <input v-model.trim=\"model\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"openai/gpt-oss-120b\">\n          <small>Usa el identificador exacto indicado por tu proveedor.</small>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Endpoint de Chat Completions</span>\n          <input v-model.trim=\"endpoint\" type=\"url\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"https://.../chat/completions\">\n        </label>\n        <label class=\"bbai-field\">\n          <span>API key <em>Solo esta sesión</em></span>\n          <input v-model=\"apiKey\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"Introduce tu API key\">\n          <small>Tu clave no se guarda en el proyecto ni en las preferencias de Blockbench.</small>\n        </label>\n      </div>\n      <div class=\"bbai-notice\"><i class=\"material-icons\">verified_user</i><p>Los mensajes y un resumen del modelo se envían al endpoint elegido. Usa únicamente proveedores en los que confíes.</p></div>\n      <button type=\"button\" class=\"bbai-primary-button bbai-save\" @click=\"saveSettings()\">\n        <i class=\"material-icons\">check</i> Guardar configuración\n      </button>\n      <p class=\"bbai-settings-foot\">También encontrarás proveedor, modelo y endpoint en la pestaña <strong>Settings</strong> del plugin. La clave se introduce aquí o mediante su botón de configuración.</p>\n    </div>\n  </template>\n\n  <template v-else>\n    <div class=\"bbai-context-bar\">\n      <span class=\"bbai-live-dot\"></span>\n      <span class=\"bbai-context-project\" :title=\"projectLabel\">{{ projectLabel }}</span>\n      <button class=\"bbai-icon-button bbai-reset\" type=\"button\" @click=\"resetChat()\" :disabled=\"busy\" title=\"Nueva conversación\" aria-label=\"Nueva conversación\"><i class=\"material-icons\">edit_square</i></button>\n    </div>\n\n    <main class=\"bbai-conversation\" ref=\"history\" aria-live=\"polite\">\n      <div v-if=\"!messages.length\" class=\"bbai-welcome\">\n        <div class=\"bbai-welcome-badge\"><i class=\"material-icons\">auto_awesome</i><span>Tu espacio creativo</span></div>\n        <div class=\"bbai-orb\"><i class=\"material-icons\">view_in_ar</i></div>\n        <h2>Imagina. Describe.<br><span>Construye.</span></h2>\n        <p>Tu modelo empieza con una idea. Pídeme que cree geometrías, organice partes o edite los cubos de tu proyecto.</p>\n        <div class=\"bbai-suggestions\">\n          <button type=\"button\" @click=\"generateLocalDemo()\"><i class=\"material-icons\">offline_bolt</i><span>Demo local · Sin IA / API</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Crea un pequeño robot con cabeza, torso, brazos y piernas. Organiza sus partes en grupos.')\"><i class=\"material-icons\">smart_toy</i><span>Crear un robot</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Diseña una espada medieval con hoja, guarda, empuñadura y pomo usando cubos.')\"><i class=\"material-icons\">auto_fix_high</i><span>Diseñar una espada</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Inspecciona el modelo actual y dime cómo están organizados sus elementos.')\"><i class=\"material-icons\">account_tree</i><span>Analizar el modelo</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n        </div>\n      </div>\n\n      <article v-for=\"(message, index) in messages\" :key=\"index\" class=\"bbai-entry\" :class=\"'bbai-entry-' + message.role\">\n        <div class=\"bbai-entry-meta\">\n          <span v-if=\"message.role === 'assistant'\" class=\"bbai-entry-avatar\"><i class=\"material-icons\">auto_awesome</i></span>\n          <span v-else class=\"bbai-user-avatar\"><i class=\"material-icons\">person</i></span>\n          <strong>{{ message.role === 'user' ? 'Tú' : 'Blockbench AI' }}</strong>\n        </div>\n        <div class=\"bbai-entry-text\">{{ message.content }}</div>\n      </article>\n      <div v-if=\"busy\" class=\"bbai-active-step\" role=\"status\">\n        <span class=\"bbai-thinking-icon\"><i class=\"material-icons\">auto_awesome</i></span>\n        <div><strong>Trabajando en tu modelo</strong><span>{{ status }}</span></div>\n        <span class=\"bbai-pulse-dot\"></span>\n      </div>\n    </main>\n\n    <div class=\"bbai-bottom\">\n      <div v-if=\"!apiKey\" class=\"bbai-setup-hint\"><i class=\"material-icons\">key</i><span>¿Aún no conectas tu IA?</span><button type=\"button\" @click=\"openSettings()\">Configurar</button></div>\n      <form class=\"bbai-composer\" @submit.prevent=\"send()\">\n        <textarea v-model=\"prompt\" :disabled=\"busy\" @keydown.enter.exact.prevent=\"send()\" placeholder=\"Describe lo que quieres crear...\" rows=\"3\" maxlength=\"4000\" aria-label=\"Mensaje para Blockbench AI\"></textarea>\n        <div class=\"bbai-compose-toolbar\">\n          <span class=\"bbai-compose-tip\"><i class=\"material-icons\">deployed_code</i> Geometría editable</span>\n          <button v-if=\"busy\" class=\"bbai-stop-button\" type=\"button\" @click=\"cancel()\" title=\"Cancelar solicitud\"><i class=\"material-icons\">stop</i> Detener</button>\n          <button v-else class=\"bbai-send-button\" type=\"submit\" :disabled=\"!prompt.trim()\" title=\"Enviar mensaje\" aria-label=\"Enviar mensaje\"><i class=\"material-icons\">arrow_upward</i></button>\n        </div>\n      </form>\n      <div class=\"bbai-footer\"><span>Enter para enviar · Shift + Enter para nueva línea</span><span class=\"bbai-footer-status\"><i class=\"material-icons\">history</i> Undo</span></div>\n    </div>\n  </template>\n</section>";
+  const TEMPLATE = "\n<section class=\"bbai-root\">\n  <header class=\"bbai-topbar\">\n    <div class=\"bbai-identity\">\n      <div class=\"bbai-logomark\"><i class=\"material-icons\">auto_awesome</i></div>\n      <div class=\"bbai-brand\">\n        <strong>Blockbench AI</strong>\n        <span>Tu asistente de modelado</span>\n      </div>\n    </div>\n    <button class=\"bbai-icon-button\" type=\"button\" @click=\"view === 'settings' ? view = 'chat' : openSettings()\" :title=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\" :aria-label=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\">\n      <i class=\"material-icons\">{{ view === 'settings' ? 'close' : 'tune' }}</i>\n    </button>\n  </header>\n  <nav class=\"bbai-tabs\" aria-label=\"Secciones de Blockbench AI\">\n    <button type=\"button\" :class=\"{active: view === 'chat'}\" @click=\"view = 'chat'\"><i class=\"material-icons\">chat_bubble_outline</i> Chat</button>\n    <button type=\"button\" :class=\"{active: view === 'settings'}\" @click=\"openSettings()\"><i class=\"material-icons\">settings</i> Ajustes</button>\n    <span class=\"bbai-version\">v0.5</span>\n  </nav>\n\n  <template v-if=\"view === 'settings'\">\n    <div class=\"bbai-settings-view\">\n      <div class=\"bbai-section-intro\">\n        <div class=\"bbai-section-icon\"><i class=\"material-icons\">tune</i></div>\n        <h3>Configurar IA</h3>\n        <p>Elige tu proveedor y conecta un modelo compatible con herramientas.</p>\n      </div>\n      <div class=\"bbai-config-card\">\n        <label class=\"bbai-field\">\n          <span>Proveedor</span>\n          <select v-model=\"provider\" @change=\"changeProvider\">\n            <option value=\"gemini\">Google Gemini · plan gratuito</option>\n            <option value=\"cloudflare\">Cloudflare · Qwen Workers AI</option>\n            <option value=\"groq\">Groq · plan gratuito</option>\n            <option value=\"openai\">OpenAI</option>\n            <option value=\"custom\">Personalizado / local</option>\n          </select>\n        </label>\n        <label v-if=\"provider === 'cloudflare'\" class=\"bbai-field\">\n          <span>Cloudflare Account ID</span>\n          <input v-model.trim=\"cloudflareAccount\" @input=\"updateCloudflareEndpoint()\" spellcheck=\"false\" maxlength=\"32\" placeholder=\"32 caracteres hexadecimales\">\n          <small>Solo se usa para construir la URL de Workers AI. No es tu token secreto.</small>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Modelo</span>\n          <input v-model.trim=\"model\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"openai/gpt-oss-120b\">\n          <small>Usa el identificador exacto indicado por tu proveedor.</small>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Endpoint de Chat Completions</span>\n          <input v-model.trim=\"endpoint\" type=\"url\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"https://.../chat/completions\">\n        </label>\n        <label class=\"bbai-field\">\n          <span>API key <em>Solo esta sesión</em></span>\n          <input v-model=\"apiKey\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"Introduce tu API key\">\n          <small>Tu clave no se guarda en el proyecto ni en las preferencias de Blockbench.</small>\n        </label>\n      </div>\n      <div class=\"bbai-notice\"><i class=\"material-icons\">verified_user</i><p>Los mensajes y un resumen del modelo se envían al endpoint elegido. Usa únicamente proveedores en los que confíes.</p></div>\n      <div v-if=\"connectionStatus\" class=\"bbai-connection-status\" role=\"status\" :class=\"connectionResult\">{{ connectionStatus }}</div>\n      <button type=\"button\" class=\"bbai-secondary-button\" @click=\"testConnection()\" :disabled=\"testingConnection || busy\"><i class=\"material-icons\">wifi_tethering</i> {{ testingConnection ? 'Comprobando...' : 'Probar conexión' }}</button>\n      <button type=\"button\" class=\"bbai-primary-button bbai-save\" @click=\"saveSettings()\">\n        <i class=\"material-icons\">check</i> Guardar configuración\n      </button>\n      <p class=\"bbai-settings-foot\">También encontrarás proveedor, modelo y endpoint en la pestaña <strong>Settings</strong> del plugin. La clave se introduce aquí o mediante su botón de configuración.</p>\n    </div>\n  </template>\n\n  <template v-else>\n    <div class=\"bbai-context-bar\">\n      <span class=\"bbai-live-dot\"></span>\n      <span class=\"bbai-context-project\" :title=\"projectLabel\">{{ projectLabel }}</span>\n      <button class=\"bbai-icon-button bbai-reset\" type=\"button\" @click=\"resetChat()\" :disabled=\"busy\" title=\"Nueva conversación\" aria-label=\"Nueva conversación\"><i class=\"material-icons\">edit_square</i></button>\n    </div>\n\n    <main class=\"bbai-conversation\" ref=\"history\" aria-live=\"polite\">\n      <div v-if=\"!messages.length\" class=\"bbai-welcome\">\n        <div class=\"bbai-welcome-badge\"><i class=\"material-icons\">auto_awesome</i><span>Tu espacio creativo</span></div>\n        <div class=\"bbai-orb\"><i class=\"material-icons\">view_in_ar</i></div>\n        <h2>Imagina. Describe.<br><span>Construye.</span></h2>\n        <p>Tu modelo empieza con una idea. Pídeme que cree geometrías, organice partes o edite los cubos de tu proyecto.</p>\n        <div class=\"bbai-suggestions\">\n          <button type=\"button\" @click=\"generateLocalDemo()\"><i class=\"material-icons\">offline_bolt</i><span>Demo androide · Sin IA</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"generateLocalPropDemo('sci_fi_drone')\"><i class=\"material-icons\">flight</i><span>Demo dron · Sin IA</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"generateLocalPropDemo('energy_sword')\"><i class=\"material-icons\">construction</i><span>Demo espada · Sin IA</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Crea un pequeño robot con cabeza, torso, brazos y piernas. Organiza sus partes en grupos.')\"><i class=\"material-icons\">smart_toy</i><span>Crear un robot</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Diseña una espada medieval con hoja, guarda, empuñadura y pomo usando cubos.')\"><i class=\"material-icons\">auto_fix_high</i><span>Diseñar una espada</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Inspecciona el modelo actual y dime cómo están organizados sus elementos.')\"><i class=\"material-icons\">account_tree</i><span>Analizar el modelo</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n        </div>\n      </div>\n\n      <article v-for=\"(message, index) in messages\" :key=\"index\" class=\"bbai-entry\" :class=\"'bbai-entry-' + message.role\">\n        <div class=\"bbai-entry-meta\">\n          <span v-if=\"message.role === 'assistant'\" class=\"bbai-entry-avatar\"><i class=\"material-icons\">auto_awesome</i></span>\n          <span v-else class=\"bbai-user-avatar\"><i class=\"material-icons\">person</i></span>\n          <strong>{{ message.role === 'user' ? 'Tú' : 'Blockbench AI' }}</strong>\n        </div>\n        <div class=\"bbai-entry-text\">{{ message.content }}</div>\n      </article>\n      <div v-if=\"busy\" class=\"bbai-active-step\" role=\"status\">\n        <span class=\"bbai-thinking-icon\"><i class=\"material-icons\">auto_awesome</i></span>\n        <div><strong>Trabajando en tu modelo</strong><span>{{ status }}</span></div>\n        <span class=\"bbai-pulse-dot\"></span>\n      </div>\n    </main>\n\n    <div class=\"bbai-bottom\">\n      <div v-if=\"!apiKey\" class=\"bbai-setup-hint\"><i class=\"material-icons\">key</i><span>¿Aún no conectas tu IA?</span><button type=\"button\" @click=\"openSettings()\">Configurar</button></div>\n      <form class=\"bbai-composer\" @submit.prevent=\"send()\">\n        <textarea v-model=\"prompt\" :disabled=\"busy\" @keydown.enter.exact.prevent=\"send()\" placeholder=\"Describe lo que quieres crear...\" rows=\"3\" maxlength=\"4000\" aria-label=\"Mensaje para Blockbench AI\"></textarea>\n        <div class=\"bbai-compose-toolbar\">\n          <span class=\"bbai-compose-tip\"><i class=\"material-icons\">deployed_code</i> Geometría editable</span>\n          <button v-if=\"busy\" class=\"bbai-stop-button\" type=\"button\" @click=\"cancel()\" title=\"Cancelar solicitud\"><i class=\"material-icons\">stop</i> Detener</button>\n          <button v-else class=\"bbai-send-button\" type=\"submit\" :disabled=\"!prompt.trim()\" title=\"Enviar mensaje\" aria-label=\"Enviar mensaje\"><i class=\"material-icons\">arrow_upward</i></button>\n        </div>\n      </form>\n      <div class=\"bbai-footer\"><span>Enter para enviar · Shift + Enter para nueva línea</span><span class=\"bbai-footer-status\"><i class=\"material-icons\">history</i> Undo</span></div>\n    </div>\n  </template>\n</section>";
 
   function makeComponent() {
     const prefs = settingsSnapshot();
     return {
       template: TEMPLATE,
       data: function () {
-        return {provider: prefs.provider, endpoint: prefs.endpoint, model: prefs.model, apiKey: sessionApiKey,
+        return {provider: prefs.provider, cloudflareAccount: prefs.cloudflareAccount, endpoint: prefs.endpoint, model: prefs.model, apiKey: sessionApiKey,
           view: 'chat', prompt: '', status: '', busy: false, showSettings: false,
+          testingConnection: false, connectionStatus: '', connectionResult: '',
           messages: [], history: [], projectIdentity: null, steps: 0};
       },
       computed: {
@@ -1038,6 +1263,7 @@
         refreshConfiguration: function () {
           const prefs = settingsSnapshot();
           this.provider = prefs.provider;
+          this.cloudflareAccount = prefs.cloudflareAccount;
           this.endpoint = prefs.endpoint;
           this.model = prefs.model;
         },
@@ -1050,18 +1276,59 @@
           } else if (this.provider === 'gemini') {
             this.endpoint = GEMINI_ENDPOINT;
             this.model = 'gemini-3.8-flash';
+          } else if (this.provider === 'cloudflare') {
+            this.model = CLOUDFLARE_MODEL;
+            this.updateCloudflareEndpoint();
           } else if (this.provider === 'openai') {
             this.endpoint = DEFAULT_ENDPOINT;
             this.model = 'gpt-4.1-mini';
           }
         },
+        updateCloudflareEndpoint: function () {
+          if (this.provider === 'cloudflare') this.endpoint = validCloudflareAccount(this.cloudflareAccount) ? cloudflareEndpoint(this.cloudflareAccount) : '';
+        },
+        testConnection: async function () {
+          if (this.testingConnection || this.busy) return;
+          this.testingConnection=true;
+          this.connectionResult='';
+          this.connectionStatus='Comprobando autenticación y compatibilidad...';
+          try {
+            const result=await checkProviderConnection({
+              provider:this.provider,cloudflareAccount:this.cloudflareAccount,endpoint:this.endpoint,
+              model:this.model,apiKey:String(this.apiKey || sessionApiKey || '').trim()
+            });
+            this.connectionResult='success';
+            this.connectionStatus='Conexión correcta con '+result.model+'. La compatibilidad con herramientas se comprobará al modelar.';
+          } catch(error){
+            this.connectionResult='error';
+            this.connectionStatus=safeError(error.message || error, this.apiKey);
+          } finally {this.testingConnection=false;}
+        },
         saveSettings: function () {
           try {
-            storeConfiguration({provider: this.provider, endpoint: this.endpoint, model: this.model});
+            storeConfiguration({provider: this.provider, cloudflareAccount: this.cloudflareAccount, endpoint: this.endpoint, model: this.model});
             sessionApiKey = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
             this.view = 'chat';
             Blockbench.showQuickMessage('Configuración actualizada');
           } catch (error) {Blockbench.showQuickMessage(safeError(error.message));}
+        },
+        generateLocalPropDemo: function (kind) {
+          if (this.busy) return;
+          try {
+            activeProject();
+            const result=generateProp({
+              name:kind==='energy_sword' ? 'Energy Sword · Offline Demo' : 'Sci-fi Drone · Offline Demo',
+              kind:kind
+            },{project:Project,remainingCubes:MAX_CUBES_PER_RUN,toolCalls:0});
+            this.messages.push({role:'assistant',content:'Demo local creada sin API. '+
+              result.created_count+' piezas editables, '+
+              result.subgroups+' grupos y PNG '+result.texture.pixels.join('×')+
+              '. Puedes usar Ctrl+Z para deshacer.'});
+            this.scrollBottom();
+          } catch(error) {
+            this.messages.push({role:'assistant',content:'Error en demo: '+safeError(error.message)});
+            this.scrollBottom();
+          }
         },
         generateLocalDemo: function () {
           if (this.busy) return;
@@ -1131,6 +1398,8 @@
 
   const CSS = "\n.bbai-root{--bbai-line:var(--color-border,#363b46);--bbai-text:var(--color-text,#e5e8f0);--bbai-muted:var(--color-text,#a4a9b7);--bbai-bg:var(--color-back,#171a20);--bbai-surface:var(--color-ui,#242832);--bbai-accent:var(--color-accent,#688df4);height:100%;min-height:240px;display:flex;flex-direction:column;overflow:hidden;background:var(--bbai-bg);color:var(--bbai-text);font-family:inherit;font-size:12px}\n.bbai-root *{box-sizing:border-box}.bbai-root button,.bbai-root input,.bbai-root select,.bbai-root textarea{font:inherit}.bbai-root button{cursor:pointer}.bbai-root button:disabled{opacity:.4;cursor:not-allowed}\n.bbai-root .material-icons{font-size:16px;line-height:1;vertical-align:middle}\n.bbai-topbar{min-height:59px;padding:11px 15px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--bbai-line)}\n.bbai-identity{display:flex;align-items:center;gap:10px;min-width:0}.bbai-logomark{height:34px;width:34px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1px solid color-mix(in srgb,var(--bbai-accent),transparent 69%);border-radius:11px;background:color-mix(in srgb,var(--bbai-accent),transparent 87%);color:var(--bbai-accent)}\n.bbai-logomark .material-icons{font-size:20px}.bbai-brand{display:flex;flex-direction:column;gap:4px;min-width:0}.bbai-brand strong{font-size:13px;letter-spacing:-.1px}.bbai-brand span{font-size:10px;color:var(--bbai-muted);opacity:.66}\n.bbai-icon-button{background:transparent;color:var(--bbai-text);border:0;width:29px;height:29px;border-radius:8px;display:flex;align-items:center;justify-content:center;transition:background .16s,color .16s}\n.bbai-icon-button:hover{background:var(--bbai-surface);color:var(--bbai-accent)}.bbai-tabs{height:39px;display:flex;align-items:stretch;padding:0 12px;gap:5px;border-bottom:1px solid var(--bbai-line)}\n.bbai-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;padding:0 10px;color:var(--bbai-muted);opacity:.65;display:flex;align-items:center;gap:7px;font-size:11px;font-weight:500}\n.bbai-tabs button.active{border-bottom-color:var(--bbai-accent);color:var(--bbai-text);opacity:1}.bbai-tabs button:hover{opacity:1}.bbai-tabs .material-icons{font-size:14px}\n.bbai-version{margin:auto 2px auto auto;opacity:.42;font-size:10px}.bbai-context-bar{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 13px;background:color-mix(in srgb,var(--bbai-surface),transparent 50%);border-bottom:1px solid var(--bbai-line)}\n.bbai-live-dot{width:6px;height:6px;border-radius:50%;background:#45c7a2;box-shadow:0 0 0 3px rgba(69,199,162,.1);flex-shrink:0}\n.bbai-context-project{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;font-size:10px;opacity:.74}\n.bbai-context-bar .bbai-reset{width:24px;height:24px}.bbai-conversation{flex:1;min-height:0;overflow:auto;scrollbar-width:thin;overscroll-behavior:contain;padding:16px 13px 21px;display:flex;flex-direction:column;gap:18px}\n.bbai-welcome{margin:auto 0;display:flex;flex-direction:column;align-items:center;text-align:center;padding:16px 5px 6px}\n.bbai-welcome-badge{display:flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--bbai-line);border-radius:99px;color:var(--bbai-muted);opacity:.87;font-size:10px}\n.bbai-welcome-badge .material-icons{font-size:13px;color:var(--bbai-accent)}.bbai-orb{margin:20px 0 14px;width:66px;height:66px;border-radius:22px;display:grid;place-items:center;background:radial-gradient(circle at 25% 25%,color-mix(in srgb,var(--bbai-accent),transparent 76%),transparent 70%),var(--bbai-surface);border:1px solid var(--bbai-line);box-shadow:0 12px 36px rgba(0,0,0,.08)}\n.bbai-orb .material-icons{font-size:34px;color:var(--bbai-accent)}.bbai-welcome h2{margin:0;font-size:21px;line-height:1.24;font-weight:700;letter-spacing:-.6px}.bbai-welcome h2 span{color:var(--bbai-accent)}\n.bbai-welcome p{margin:12px 0 20px;max-width:280px;line-height:1.65;color:var(--bbai-muted);opacity:.72;font-size:11px}.bbai-suggestions{width:100%;display:flex;flex-direction:column;gap:7px}\n.bbai-suggestions button{border:1px solid var(--bbai-line);background:var(--bbai-surface);color:var(--bbai-text);border-radius:10px;text-align:left;min-height:42px;padding:0 11px;display:flex;align-items:center;gap:9px;transition:border-color .15s,transform .15s}\n.bbai-suggestions button:hover{border-color:var(--bbai-accent);transform:translateY(-1px)}.bbai-suggestions button .material-icons:first-child{color:var(--bbai-accent)}.bbai-suggestions button span{flex:1;font-size:11px}\n.bbai-suggestions .bbai-chevron{font-size:13px;opacity:.4}.bbai-entry{display:flex;flex-direction:column;gap:8px;min-width:0}.bbai-entry-meta{display:flex;gap:7px;align-items:center}.bbai-entry-meta strong{font-size:10px;opacity:.82}\n.bbai-entry-avatar,.bbai-user-avatar{width:22px;height:22px;border:1px solid var(--bbai-line);border-radius:7px;display:grid;place-items:center;background:var(--bbai-surface);color:var(--bbai-accent)}\n.bbai-user-avatar{color:var(--bbai-text)}.bbai-entry-avatar .material-icons,.bbai-user-avatar .material-icons{font-size:14px}\n.bbai-entry-text{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text;font-size:12px;line-height:1.7;padding-left:29px}.bbai-entry-user .bbai-entry-text{padding:10px 12px;margin-left:29px;background:var(--bbai-surface);border:1px solid var(--bbai-line);border-radius:11px}\n.bbai-active-step{display:flex;align-items:center;gap:9px;background:var(--bbai-surface);border:1px solid var(--bbai-line);border-radius:10px;padding:11px}\n.bbai-active-step>div{display:flex;flex:1;min-width:0;flex-direction:column;gap:5px}.bbai-active-step strong{font-size:11px}.bbai-active-step div span{font-size:10px;opacity:.7;overflow-wrap:anywhere}\n.bbai-thinking-icon{color:var(--bbai-accent)}.bbai-thinking-icon .material-icons{font-size:19px;animation:bbai-shimmer 1.8s ease-in-out infinite}\n.bbai-pulse-dot{width:6px;height:6px;flex-shrink:0;border-radius:50%;background:var(--bbai-accent);animation:bbai-shimmer 1.4s ease-in-out infinite}\n@keyframes bbai-shimmer{50%{opacity:.35;transform:scale(.94)}}.bbai-bottom{padding:8px 10px 11px;border-top:1px solid var(--bbai-line);background:var(--bbai-bg)}\n.bbai-setup-hint{margin-bottom:8px;display:flex;align-items:center;gap:5px;background:color-mix(in srgb,var(--bbai-accent),transparent 91%);padding:9px 8px;border:1px solid color-mix(in srgb,var(--bbai-accent),transparent 79%);border-radius:8px;font-size:10px}\n.bbai-setup-hint .material-icons{font-size:14px;color:var(--bbai-accent)}.bbai-setup-hint span{flex:1;min-width:0}.bbai-setup-hint button{background:none;border:0;color:var(--bbai-accent);font-weight:700;font-size:10px;padding:2px}\n.bbai-composer{border:1px solid var(--bbai-line);background:var(--bbai-surface);border-radius:12px;padding:8px 9px 7px;transition:border-color .15s}\n.bbai-composer:focus-within{border-color:var(--bbai-accent)}.bbai-composer textarea{width:100%;min-height:46px;max-height:180px;resize:vertical;border:0;outline:none;background:transparent;color:var(--bbai-text);font-size:12px;line-height:1.5;display:block;padding:2px 0;scrollbar-width:thin}\n.bbai-composer textarea::placeholder{opacity:.45;color:var(--bbai-text)}.bbai-compose-toolbar{display:flex;align-items:center;justify-content:space-between;margin-top:5px;gap:7px}\n.bbai-compose-tip{font-size:10px;display:flex;align-items:center;gap:5px;opacity:.6}.bbai-compose-tip .material-icons{font-size:13px}\n.bbai-send-button,.bbai-stop-button{height:28px;min-width:28px;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:8px;background:var(--bbai-accent);color:#fff}\n.bbai-stop-button{gap:5px;padding:0 9px;background:var(--bbai-line);color:var(--bbai-text)}.bbai-footer{display:flex;justify-content:space-between;gap:3px;margin:8px 2px 0;color:var(--bbai-muted);opacity:.47;font-size:9px}\n.bbai-footer-status{display:flex;align-items:center;gap:4px;white-space:nowrap}.bbai-footer .material-icons{font-size:12px}\n.bbai-settings-view{overflow-y:auto;flex:1;min-height:0;padding:17px 13px 20px;scrollbar-width:thin}.bbai-section-intro{text-align:left;margin-bottom:17px}\n.bbai-section-icon{width:35px;height:35px;border-radius:10px;display:grid;place-items:center;color:var(--bbai-accent);background:var(--bbai-surface);border:1px solid var(--bbai-line)}\n.bbai-section-intro h3{font-size:17px;letter-spacing:-.3px;margin:12px 0 6px}.bbai-section-intro p{font-size:11px;line-height:1.55;opacity:.65;margin:0}\n.bbai-config-card{padding:13px;border:1px solid var(--bbai-line);border-radius:12px;background:var(--bbai-surface);display:flex;flex-direction:column;gap:16px}\n.bbai-field{display:flex;flex-direction:column;gap:7px;min-width:0}.bbai-field>span{font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:5px}\n.bbai-field em{font-size:9px;font-style:normal;font-weight:400;opacity:.6}\n.bbai-field input,.bbai-field select{background:var(--bbai-bg);color:var(--bbai-text);border:1px solid var(--bbai-line);border-radius:8px;padding:10px 9px;font-size:11px;min-width:0;width:100%;outline:none}\n.bbai-field input:focus,.bbai-field select:focus{border-color:var(--bbai-accent)}.bbai-field small{font-size:10px;opacity:.6;line-height:1.5}\n.bbai-notice{display:flex;gap:9px;padding:13px 10px;border:1px solid var(--bbai-line);border-radius:10px;margin-top:12px;align-items:start}\n.bbai-notice .material-icons{color:var(--bbai-accent);flex-shrink:0}.bbai-notice p{margin:0;font-size:10px;line-height:1.55;opacity:.73}\n.bbai-primary-button{background:var(--bbai-accent);color:white;border:0;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:7px;padding:11px;width:100%;font-size:11px;font-weight:600}\n.bbai-save{margin-top:14px}.bbai-settings-foot{font-size:10px;line-height:1.6;opacity:.6;margin:13px 2px 0}\n@media(max-width:290px){.bbai-brand span,.bbai-footer-status{display:none}.bbai-welcome h2{font-size:18px}.bbai-section-intro h3{font-size:15px}}\n";
 
+  const EXTRA_CSS = '.bbai-secondary-button{background:var(--bbai-surface);color:var(--bbai-text);border:1px solid var(--bbai-line);border-radius:9px;padding:11px;width:100%;display:flex;align-items:center;justify-content:center;gap:7px;margin-top:11px;font-size:11px}.bbai-secondary-button:hover{border-color:var(--bbai-accent)}.bbai-connection-status{font-size:11px;line-height:1.5;padding:9px 10px;margin-top:12px;border-radius:9px;background:var(--bbai-surface);border:1px solid var(--bbai-line);overflow-wrap:anywhere}.bbai-connection-status.success{border-color:#478d77;color:#6bd1a2}.bbai-connection-status.error{border-color:#96575d;color:#f4a3a8}';
+
   Plugin.register(ID, {
     title: 'Blockbench AI',
     author: 'jonathanthxd',
@@ -1142,7 +1411,7 @@
     tags: ['Utility'],
     onload: function () {
       registerPreferences();
-      style = Blockbench.addCSS(CSS);
+      style = Blockbench.addCSS(CSS + '\n' + EXTRA_CSS);
       panel = new Panel('blockbench_ai_panel', {
         name: 'Blockbench AI',
         icon: 'auto_awesome',
