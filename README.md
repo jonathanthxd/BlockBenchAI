@@ -2,7 +2,35 @@
 
 **BlockBenchAI** is an independent, MIT-licensed AI modeling assistant for [Blockbench](https://www.blockbench.net/). Write a prompt in the dockable chat panel to create or modify **real, editable Blockbench cubes and groups**.
 
-> **Version 0.2.1 — experimental public test.** JavaScript syntax and mocked Blockbench integration are checked in GitHub Actions. Real Blockbench Desktop behavior still requires in-app testing.
+> **Version 0.3.0 — experimental public test.** JavaScript syntax and mocked Blockbench integration are checked in GitHub Actions. Real Blockbench Desktop behavior still requires in-app testing.
+
+## What's new in v0.3 — actual pixel texturing and detailed models
+
+Previously, the AI could create simple untextured cube scaffolds and set *viewport palette colors*, which are **not actual texture pixels**. This release adds an internal PNG texture generation pipeline:
+
+- **Actual paintable PNG textures:** builds color-shaded texture atlases in memory using a pixel canvas, registers them as native Blockbench textures, and assigns per-face UV rectangles to every generated cube.
+- **Materials:** metal, wood, fabric, stone, skin, circuit, gem and plain. Materials include deterministic pixel details, highlights, shading, and optional accent colors.
+- **Paint custom features:** individual rectangles, dots and lines in a 16×16 pixel grid per face (e.g. android eyes, panels, circuit traces).
+- **Detailed procedural characters:** \`generate_character\` produces named geometry for villagers, android villagers, robots and knights. Instead of an unadorned collection of body rectangles, characters now have mechanical joints, layered faceplates, noses, boots, fingers, trim and other accents.
+- **New AI tools:** \`build_painted_model\` for 1–96 colored parts, \`paint_existing_cubes\` for recoloring existing geometry, and \`generate_character\` for detailed starting points.
+- **Better free-tier efficiency:** dynamically exposes only relevant tools to the provider according to your current request, reducing tool-schema token overhead.
+
+**Recommended first test:** start a **new Generic Model** and type:
+
+> Crea un aldeano androide detallado usando generate_character. Quiero una cara reconocible, placas mecánicas, brazos articulados, manos con dedos, botas, circuitos luminosos y una textura PNG real. Usa gris acero, cobre y luces cian.
+
+Then try a follow-up:
+
+> Pinta su cabeza y sus circuitos con una paleta más oscura y detalles dorados.
+
+### Important scope and safeguards
+
+- This is **procedural pixel art**, not generative image diffusion, manual artistic painting, or photorealistic texturing. The AI supplies palette/materials/marks and the plugin paints real pixels deterministically.
+- The generated texture is a **new native PNG atlas**, not an external file that must be imported. Save the Blockbench project to keep the texture inside the project as supported by the chosen format.
+- Each face is mapped independently to one 16×16 tile. This produces crisp surfaces and independent details, but it may stretch the pixels depending on a cube's aspect ratio.
+- This implementation deliberately rejects painting when a **single-texture format already has a texture**, rather than overwriting your existing artwork or UV layout. For best results use a fresh **Generic Model**.
+- The standalone \`create_cubes\` tool still generates plain cubes; use the new painted tools when you need real textures.
+- More elaborate characters still need human iteration, custom mesh operations, rigging, and manual artistry. Texture production has **not** been verified in Blockbench Desktop itself yet.
 
 ## What's new in v0.2.1
 
@@ -64,11 +92,11 @@ The current tool set supports:
 
 ### Limitations
 
-This is an early modeling prototype, **not** an all-format AI 3D asset generator yet. It currently **does not** paint textures, export, generate images, build rigged animation, create arbitrary polygon meshes, or generate rotation-heavy geometry. Only native cube-compatible formats are appropriate for creation. Cube palette indices are *preview colors*, not painted textures. Actual modeling quality depends on the selected AI model.
+This is an early modeling prototype, **not** an all-format AI 3D asset generator yet. It can now paint procedural pixel textures, but **does not** export automatically, generate image assets with a diffusion model, build rigged animation, or create arbitrary polygon meshes. Only native cube-compatible formats are appropriate for creation. Cube palette indices are *preview colors*, not painted textures. Actual modeling quality depends on the selected AI model.
 
 The endpoint uses the **OpenAI Chat Completions tool calling format**. Endpoints without this API format are not supported. Remote endpoints must use HTTPS; localhost may use HTTP.
 
-If the screen appears outdated after reinstalling, verify the plugin shows **v0.2.1** in the chat tab and that the old local plugin has been disabled.
+If the screen appears outdated after reinstalling, verify the plugin shows **v0.3** in the chat tab and that the old local plugin has been disabled.
 
 ## Testing and contributing
 
