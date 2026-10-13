@@ -566,7 +566,33 @@ test('tool contract exposes compact nine-element parts instead of full per-face 
   const view=host.view();view.apiKey='token';view.prompt='Crea una locomotora detallada';await view.send();
   assert.equal(tools[0].function.name,'compose_model');
   const schema=tools[0].function.parameters.properties.parts;
-  assert.equal(schema.items.maxItems,9);
+  assert.equal(schema.items.type,'string');
   assert.equal(schema.maxItems,96);
   assert.ok(!JSON.stringify(tools).includes('faceMarkSchema'),'must not send huge pixel markup schema');
+});
+
+test('new string-based compact plan paints native geometry and reduces tool output size', async () => {
+  let n=0; const host=makeHost(async ()=>{
+    n++;
+    if(n===1)return answer({tool_calls:[toolCall('compactString','compose_model',{
+      name:'Pixel Bike',palette:{primary:'#778899',secondary:'#343434',accent:'#44DDDD'},
+      parts:[
+        'Front Wheel|-6,0,-1|-2,4,1|m|secondary',
+        'Frame|-3,3,-1|8,5,1|m|primary',
+        'Headlight|8,4,-1|9,6,1|g|accent'
+      ]
+    })]});
+    return answer({content:'Motocicleta creada'});
+  });
+  const view=host.view();view.apiKey='test';view.prompt='Crea una motocicleta';await view.send();
+  assert.equal(host.world.Cube.all.length,3);
+  assert.equal(host.world.Texture.all.length,1);
+  assert.equal(view.messages.at(-1).content,'Motocicleta creada');
+});
+test('Gemini character mode exposes a compact refinement tool in addition to the base template', async () => {
+  let tools;
+  const host=makeHost(async (_url,opts)=>{tools=JSON.parse(opts.body).tools.map(t=>t.function.name);return answer({content:'ok'});});
+  host.nativeSettings.bbai_provider.set('gemini');
+  const v=host.view();v.apiKey='test-gemini';v.prompt='Crea un androide detallado';await v.send();
+  assert.deepEqual(tools,['generate_character','compose_model','inspect_scene']);
 });
