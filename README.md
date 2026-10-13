@@ -25,7 +25,8 @@ Get Gemini key: [Google AI Studio](https://aistudio.google.com/apikey). Groq key
 
 ### Under the hood
 
-- **Compact modeling plan:** for new non-humanoid models, AI returns simple 9-field shape tuples. The plugin expands geometry, shading, palette, UV tiles and PNG texture generation locally.
+- **Compact modeling plan:** for new non-humanoid models, AI returns compact shape strings (name, XYZ bounds, material, palette). The plugin expands geometry, shading, palette, UV tiles and PNG texture generation locally.
+- **Offline verification:** the welcome screen contains **Demo local · Sin IA / API**, which generates a full detailed, textured android inside Blockbench without network access or any API key. This isolates modeling problems from provider quotas. It modifies your project (Undo is supported), so test it in a fresh Generic Model.
 - **Small tools only:** the API no longer sees all the nested schemas for every possible paint operation.
 - **Context budgeting:** fewer previous turns and smaller scene previews. This reduces repetitive input tokens.
 - **Groq 413 protection:** conservative preflight estimate for GPT-OSS 120B, plus a descriptive provider-switch message for 413. We do **not** automatically retry a request that exceeds the per-request quota.
