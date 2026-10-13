@@ -737,3 +737,43 @@ test('connection errors redact a just-entered API token even before saving prefe
   assert.match(v.connectionStatus,/401/);
   assert.ok(!v.connectionStatus.includes(token),'secret must never be shown in error banner');
 });
+
+test('typing Demo Dron runs fully offline without requiring provider credentials', async () => {
+  let network=0;
+  const host=makeHost(async()=>{network++;return answer({content:'not expected'});});
+  const v=host.view();v.prompt='Demo Dron';
+  await v.send();
+  assert.equal(network,0,'offline demo must never contact provider');
+  assert.equal(v.busy,false);
+  assert.equal(v.prompt,'');
+  assert.ok(host.world.Cube.all.length>=55);
+  assert.equal(host.world.Texture.all.length,1);
+  assert.equal(v.messages[0].content,'Demo Dron');
+  assert.match(v.messages.at(-1).content,/Demo local creada/);
+  assert.ok(!v.messages.at(-1).content.includes('API key'));
+});
+test('offline demo aliases work even after the welcome screen disappears', async () => {
+  let network=0;
+  const host=makeHost(async()=>{network++;return answer({content:'unexpected'});});
+  const v=host.view();
+  v.messages.push({role:'assistant',content:'An earlier message'});
+  assert.match(host.panel.component.template,/showDemos = !showDemos/);
+  assert.match(host.panel.component.template,/bbai-demo-picker/);
+  for(const prompt of ['Demo Dron', 'demo del dron', 'DEMO ESPADA', 'demo sin IA androide', 'demo cofre']){
+    v.prompt=prompt;
+    await v.send();
+  }
+  assert.equal(network,0);
+  assert.equal(host.world.Texture.all.length,5,'each demo generates a native atlas');
+  assert.ok(host.world.Cube.all.length>150);
+});
+test('ordinary prompts including the word demo are not silently intercepted', async () => {
+  let calls=0;
+  const host=makeHost(async()=>{calls++;return answer({content:'AI should handle this'});});
+  const v=host.view();v.apiKey='key';
+  v.prompt='Haz una demo del dron con un diseño diferente';
+  await v.send();
+  assert.equal(calls,1);
+  assert.equal(host.world.Cube.all.length,0);
+  assert.equal(v.messages.at(-1).content,'AI should handle this');
+});
