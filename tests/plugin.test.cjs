@@ -141,7 +141,7 @@ test('registers a native docked panel and cleans up on unload', () => {
   const host = makeHost(async () => answer({content: 'ok'}));
   assert.equal(host.panel.default_position.slot, 'right_bar');
   assert.equal(host.plugin.variant, 'desktop');
-  assert.equal(Object.keys(host.nativeSettings).length, 4);
+  assert.equal(Object.keys(host.nativeSettings).length, 5);
   for (const setting of Object.values(host.nativeSettings)) assert.equal(setting.plugin, 'blockbench_ai');
   host.plugin.onunload();
   assert.equal(Object.keys(host.nativeSettings).length, 0);
@@ -260,6 +260,7 @@ test('native plugin Settings section has provider, model, endpoint and session k
   assert.equal(s.bbai_model.type, 'text');
   assert.equal(s.bbai_endpoint.type, 'text');
   assert.equal(s.bbai_session_key.type, 'click');
+  assert.equal(s.bbai_cloudflare_account.type, 'text');
   assert.equal(s.bbai_provider.value, 'groq');
   assert.equal(s.bbai_model.value, 'openai/gpt-oss-120b');
   assert.equal(s.bbai_endpoint.value, 'https://api.groq.com/openai/v1/chat/completions');
@@ -532,7 +533,7 @@ test('413 is not retried and suggests a different provider', async () => {
 test('compact tool schema is sent for objects and keeps Groq request small', async () => {
   let body;
   const host=makeHost(async (_url,opts)=>{body=JSON.parse(opts.body);return answer({content:'ok'});});
-  const view=host.view();view.apiKey='groq-key';view.prompt='Crea una espada detallada';await view.send();
+  const view=host.view();view.apiKey='groq-key';view.prompt='Crea una locomotora detallada';await view.send();
   assert.ok(body);
   assert.deepEqual(body.tools.map(x=>x.function.name),['compose_model','inspect_scene']);
   assert.ok(JSON.stringify(body).length<5200);
@@ -608,4 +609,88 @@ test('offline quality demo creates detailed painted geometry without network cal
   assert.equal(host.world.Texture.all.length,1);
   assert.match(view.messages.at(-1).content,/Demo local creada/);
   assert.match(view.messages.at(-1).content,/Ctrl\+Z/);
+});
+
+test('Cloudflare Qwen provider produces correct endpoint from validated Account ID', async () => {
+  let url, req;
+  const host=makeHost(async (u,o)=>{url=u;req=JSON.parse(o.body);return answer({content:'Conectado'});});
+  const id='a'.repeat(32);
+  host.nativeSettings.bbai_cloudflare_account.set(id);
+  host.nativeSettings.bbai_provider.set('cloudflare');
+  assert.equal(host.nativeSettings.bbai_model.value,'@cf/qwen/qwen3.8-27b');
+  assert.equal(host.nativeSettings.bbai_endpoint.value,
+    'https://api.cloudflare.com/client/v4/accounts/'+id+'/ai/v1/chat/completions');
+  assert.ok(host.panel.component.template.includes('Cloudflare Account ID'));
+  const v=host.view();v.apiKey='cf-test-key';v.prompt='Genera un dragón';await v.send();
+  assert.equal(url,host.nativeSettings.bbai_endpoint.value);
+  assert.equal(req.model,'@cf/qwen/qwen3.8-27b');
+  assert.equal(v.messages.at(-1).content,'Conectado');
+});
+test('Cloudflare provider never uses an old endpoint with missing/invalid Account ID', async () => {
+  let called=false;
+  const host=makeHost(async ()=>{called=true;return answer({content:'not used'});});
+  host.nativeSettings.bbai_provider.set('cloudflare');
+  assert.equal(host.nativeSettings.bbai_endpoint.value,'');
+  const v=host.view();v.apiKey='some-key';v.prompt='Hello';await v.send();
+  assert.equal(called,false);
+  assert.match(v.messages.at(-1).content,/URL|endpoint/i);
+  v.openSettings();
+  v.cloudflareAccount='not-valid';
+  v.endpoint='https://api.groq.com/openai/v1/chat/completions';
+  v.saveSettings();
+  assert.equal(host.nativeSettings.bbai_endpoint.value,'');
+  assert.equal(host.nativeSettings.bbai_cloudflare_account.value,'');
+});
+test('provider connectivity test is low-cost and does not send model tools or geometry', async () => {
+  let body,authorization;
+  const host=makeHost(async (_url,o)=>{
+    body=JSON.parse(o.body);authorization=o.headers.Authorization;
+    return answer({content:'OK'});
+  });
+  const v=host.view();v.apiKey='secret-test-only';
+  await v.testConnection();
+  assert.equal(body.max_tokens,16);
+  assert.equal(body.messages.length,1);
+  assert.equal(body.tools,undefined);
+  assert.equal(body.messages[0].content,'Reply with: OK');
+  assert.equal(authorization,'Bearer secret-test-only');
+  assert.equal(v.connectionResult,'success');
+  assert.equal(host.world.Cube.all.length,0);
+});
+test('connectivity test exposes helpful error without altering the model', async () => {
+  const host=makeHost(async ()=>({ok:false,status:401,json:async()=>({error:{message:'bad auth'}})}));
+  const v=host.view();v.apiKey='bad';
+  await v.testConnection();
+  assert.equal(v.connectionResult,'error');
+  assert.match(v.connectionStatus,/401/);
+  assert.equal(host.world.Texture.all.length,0);
+});
+for(const [kind, expected, minParts] of [
+  ['energy_sword','Blade | Body',30],
+  ['sci_fi_drone','Camera | Lens',55],
+  ['treasure_chest','Lock | Housing',35]
+]){
+  test(kind+' creates organized, editable parts and one actual painted PNG texture', async () => {
+    let n=0;
+    const host=makeHost(async ()=>{
+      n++;
+      if(n===1)return answer({tool_calls:[toolCall('prop','generate_prop',{name:kind,kind})]});
+      return answer({content:'Prop creado'});
+    });
+    const v=host.view();v.apiKey='key';v.prompt='Crea '+(kind==='energy_sword'?'espada':kind==='sci_fi_drone'?'drone':'cofre');await v.send();
+    assert.equal(v.messages.at(-1).content,'Prop creado');
+    assert.ok(host.world.Cube.all.length>=minParts,'Expected '+minParts+' detail components, got '+host.world.Cube.all.length);
+    assert.ok(host.world.Group.all.length>2);
+    assert.ok(host.world.Cube.all.some(c=>c.name===expected));
+    assert.equal(host.world.Texture.all.length,1);
+    assert.match(host.world.Texture.all[0].source,/^data:image\/png;base64,/);
+    assert.ok(host.world.Cube.all.every(c=>c.faces.north.texture===host.world.Texture.all[0].uuid));
+    assert.equal(host.transactions.filter(t=>t.stage==='finish').length,1);
+  });
+}
+test('new props route to tiny deterministic tools rather than the verbose paint schema', async () => {
+  let tools;
+  const host=makeHost(async (_url,o)=>{tools=JSON.parse(o.body).tools.map(t=>t.function.name);return answer({content:'ok'});});
+  const v=host.view();v.apiKey='key';v.prompt='Crea un dron futurista';await v.send();
+  assert.deepEqual(tools,['inspect_scene']); // registered registry inspection will be extended below
 });
