@@ -1,5 +1,5 @@
 /* Blockbench AI 0.6.0 FORGE — MIT License, github.com/jonathanthxd/BlockBenchAI */
-/* Built from src/*.ts (a0f7492). Do not edit by hand; edit src/ and run `npm run build`. */
+/* Built from src/*.ts. Do not edit by hand; edit src/ and run `npm run build`. */
 (function () {
   'use strict';
 

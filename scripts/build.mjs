@@ -9,7 +9,6 @@
 // always produce byte-identical output (header embeds version only).
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,14 +24,6 @@ const ORDER = [
   'ui.ts',
   'main.ts',
 ];
-
-function gitHash() {
-  try {
-    return execSync('git rev-parse --short HEAD', { cwd: ROOT }).toString().trim();
-  } catch (_) {
-    return 'nogit';
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Tokenizer-based type stripper.
@@ -766,7 +757,6 @@ function transpile(source, filename) {
 
 function build() {
   const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
-  const hash = gitHash();
   const parts = ORDER.map((name) => {
     const src = readFileSync(join(ROOT, 'src', name), 'utf8');
     if (/[\u00c2\u00c3]/.test(src)) {
@@ -782,7 +772,7 @@ function build() {
   // Balance check: every module's braces/parens must survive stripping.
   const banner =
     '/* Blockbench AI ' + version + ' FORGE — MIT License, github.com/jonathanthxd/BlockBenchAI */\n' +
-    '/* Built from src/*.ts (' + hash + '). Do not edit by hand; edit src/ and run `npm run build`. */\n';
+    '/* Built from src/*.ts. Do not edit by hand; edit src/ and run `npm run build`. */\n';
   const body = parts
     .map((p) => '\n// ---- src/' + p.name + ' ----\n' + p.js.trim() + '\n')
     .join('');
