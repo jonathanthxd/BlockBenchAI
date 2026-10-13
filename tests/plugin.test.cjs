@@ -491,7 +491,7 @@ test('Gemini free provider preset appears in native Settings and in-panel settin
     requestedModel=JSON.parse(opts.body).model;
     return answer({content:'Gemini conectado'});
   });
-  assert.equal(host.nativeSettings.bbai_provider.options.gemini,'Google Gemini (gratis)');
+  assert.equal(host.nativeSettings.bbai_provider.options.gemini,'Google Gemini');
   assert.match(host.panel.component.template,/Google Gemini/);
   host.nativeSettings.bbai_provider.set('gemini');
   assert.equal(host.nativeSettings.bbai_model.value,'gemini-3.8-flash');
