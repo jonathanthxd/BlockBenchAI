@@ -602,7 +602,7 @@ test('offline quality demo creates detailed painted geometry without network cal
   let contacted=false;
   const host=makeHost(async ()=>{contacted=true;return answer({content:'not used'});});
   const view=host.view();
-  assert.match(host.panel.component.template,/Demo local · Sin IA/);
+  assert.match(host.panel.component.template,/Demo androide · Sin IA/);
   view.generateLocalDemo();
   assert.equal(contacted,false);
   assert.ok(host.world.Cube.all.length>=75);
@@ -693,4 +693,37 @@ test('new props route to tiny deterministic tools rather than the verbose paint 
   const host=makeHost(async (_url,o)=>{tools=JSON.parse(o.body).tools.map(t=>t.function.name);return answer({content:'ok'});});
   const v=host.view();v.apiKey='key';v.prompt='Crea un dron futurista';await v.send();
   assert.deepEqual(tools,['generate_prop','inspect_scene']);
+});
+
+test('AI does not apply stale geometry after a user edit while the provider responds', async () => {
+  let host, requests=0;
+  host=makeHost(async ()=>{
+    requests++;
+    const old=host.world.Cube.all[0];
+    old.to=[5,5,5];
+    return answer({tool_calls:[toolCall('stale','edit_cubes',{
+      cubes:[{uuid:old.uuid,to:[2,2,2]}]
+    })]});
+  });
+  const original=new host.world.Cube({name:'my manual edit',from:[0,0,0],to:[1,1,1]}).init();
+  const view=host.view();view.apiKey='key';
+  view.prompt='Edit this cube';await view.send();
+  assert.equal(requests,1);
+  assert.deepEqual(Array.from(original.to),[5,5,5],'the concurrent human change wins');
+  assert.match(view.messages.at(-1).content,/cambios manuales/i);
+  assert.equal(host.transactions.filter(t=>t.stage==='finish').length,0);
+});
+test('offline prop gallery generates multiple textured models without contacting providers', () => {
+  let contacted=false;
+  const host=makeHost(async ()=>{contacted=true;return answer({content:'unexpected'});});
+  const v=host.view();
+  assert.match(host.panel.component.template,/Demo dron · Sin IA/);
+  assert.match(host.panel.component.template,/Demo espada · Sin IA/);
+  v.generateLocalPropDemo('energy_sword');
+  assert.ok(host.world.Cube.all.length>=30);
+  v.generateLocalPropDemo('sci_fi_drone');
+  assert.ok(host.world.Cube.all.length>=85);
+  assert.equal(host.world.Texture.all.length,2);
+  assert.equal(contacted,false);
+  assert.match(v.messages.at(-1).content,/Demo local creada/);
 });
