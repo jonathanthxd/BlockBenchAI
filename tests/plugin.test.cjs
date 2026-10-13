@@ -78,7 +78,8 @@ function makeHost(fetchImpl) {
     Canvas: {updateView() {}},
     localStorage: {getItem() {return null;}, setItem() {}},
     URL, AbortController, console,
-    fetch: fetchImpl
+    fetch: fetchImpl,
+    setTimeout, clearTimeout
   };
   vm.runInNewContext(source, world, {filename: 'blockbench_ai.js'});
   plugin.onload();
@@ -274,4 +275,62 @@ test('native Settings changes update actual request provider without manual pane
   await view.send();
   assert.equal(targetURL, 'https://api.openai.com/v1/chat/completions');
   assert.equal(model, 'gpt-4.1-mini');
+});
+
+test('Groq 429 cooldown retries the same request without losing the chat or duplicating geometry', async () => {
+  let n = 0;
+  const host = makeHost(async () => {
+    n++;
+    if (n === 1) return {
+      ok: false, status: 429, headers: {get: key => key === 'retry-after' ? '0' : null},
+      json: async () => ({error: {message: 'Rate limit. Please try again in 0.01s.'}})
+    };
+    if (n === 2) return answer({tool_calls: [toolCall('recovered', 'create_cubes', {
+      cubes: [{name: 'android villager head', from: [0, 0, 0], to: [2, 2, 2]}]
+    })]});
+    return answer({content: 'El aldeano androide tiene cabeza.'});
+  });
+  const view = host.view();
+  view.apiKey = 'test-key';
+  view.prompt = 'Haz un aldeano androide';
+  await view.send();
+  assert.equal(n, 3, 'the 429 is transparently retried before the tool round');
+  assert.equal(host.world.Cube.all.length, 1, 'no geometry is applied twice');
+  assert.equal(host.world.Cube.all[0].name, 'android villager head');
+  assert.equal(view.messages.at(-1).content, 'El aldeano androide tiene cabeza.');
+});
+test('Stop aborts rate-limit wait and does not retry after cancellation', async () => {
+  let n = 0;
+  const host = makeHost(async () => {
+    n++;
+    return {
+      ok: false, status: 429, headers: {get: key => key === 'retry-after' ? '4' : null},
+      json: async () => ({error: {message: 'Tokens per minute exceeded'}})
+    };
+  });
+  const view = host.view();
+  view.apiKey = 'test-key';
+  view.prompt = 'Make a robot';
+  const sending = view.send();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  view.cancel();
+  await sending;
+  assert.equal(n, 1, 'cancel prevents subsequent requests');
+  assert.match(view.messages.at(-1).content, /Canceled/i);
+});
+test('A distant quota reset does not leave the plugin waiting indefinitely', async () => {
+  let n = 0;
+  const host = makeHost(async () => {
+    n++;
+    return {
+      ok: false, status: 429, headers: {get: key => key === 'retry-after' ? '72000' : null},
+      json: async () => ({error: {message: 'Daily free quota exceeded'}})
+    };
+  });
+  const view = host.view();
+  view.apiKey = 'test-key';
+  view.prompt = 'Make a robot';
+  await view.send();
+  assert.equal(n, 1);
+  assert.match(view.messages.at(-1).content, /límite de uso gratuito/i);
 });
