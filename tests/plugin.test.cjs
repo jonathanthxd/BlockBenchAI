@@ -692,5 +692,5 @@ test('new props route to tiny deterministic tools rather than the verbose paint 
   let tools;
   const host=makeHost(async (_url,o)=>{tools=JSON.parse(o.body).tools.map(t=>t.function.name);return answer({content:'ok'});});
   const v=host.view();v.apiKey='key';v.prompt='Crea un dron futurista';await v.send();
-  assert.deepEqual(tools,['inspect_scene']); // registered registry inspection will be extended below
+  assert.deepEqual(tools,['generate_prop','inspect_scene']);
 });
