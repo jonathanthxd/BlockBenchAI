@@ -853,7 +853,15 @@
     return url.toString();
   }
   function safeError(message) {
-    return String(message || 'Unknown error').slice(0, 360).replace(/sk-[a-z0-9_-]{8,}/gi, '[REDACTED]');
+    let out=String(message || 'Error desconocido').slice(0, 640);
+    // Providers occasionally return request details in errors. Never echo credentials into chat.
+    for(const secret of [sessionApiKey]){
+      if(secret && secret.length>3)out=out.split(secret).join('[REDACTED]');
+    }
+    return out
+      .replace(/\bBearer\s+[a-z0-9._~+/-]{8,}/gi,'Bearer [REDACTED]')
+      .replace(/\b(?:gsk_|sk-|AIza)[a-z0-9_-]{8,}/gi,'[REDACTED]')
+      .replace(/("?(?:api[_-]?key|access[_-]?token|authorization)"?\s*[:=]\s*")([^"]+)(")/gi,'$1[REDACTED]$3');
   }
   function preferences() {
     try {
