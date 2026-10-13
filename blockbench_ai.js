@@ -456,6 +456,8 @@
     if(!data.startsWith('data:image/png;base64,'))fail('Unable to encode the texture atlas as PNG.');
     const texture=new Texture({name:'AI_'+safeName(label).replace(/[^a-z0-9_-]/gi,'_')+'.png',width:width,height:height});
     texture.fromDataURL(data);
+    texture.uv_width=width;
+    texture.uv_height=height;
     return {texture:texture,width:width,height:height,columns:columns,paints:paints};
   }
   function mapCubeToAtlas(cube,atlas,index) {
@@ -799,10 +801,23 @@
     });
   }
 
-  async function requestCompletion(endpoint, model, apiKey, messages, signal, onProgress) {
+
+  function selectTools(prompt, populated) {
+    const lower=String(prompt||'').toLowerCase();
+    const character=/(aldean|villager|androide|android|robot|personaje|character|humanoid|humano|caballero|knight|golem)/i.test(lower);
+    const edit=populated&&/(modifica|modificar|cambia|cambiar|ajusta|ajustar|editar|edita|pinta|pintar|repinta|repaint|modify|change|color|textur|extend|alarga|mejora|improve)/i.test(lower);
+    const names=edit
+      ? ['inspect_scene','edit_cubes','paint_existing_cubes','build_painted_model']
+      : character
+        ? ['inspect_scene','generate_character','build_painted_model','paint_existing_cubes']
+        : ['inspect_scene','build_painted_model','create_cubes','create_group','paint_existing_cubes'];
+    return TOOLS.filter(function(t){return names.includes(t.function.name);});
+  }
+
+  async function requestCompletion(endpoint, model, apiKey, messages, signal, onProgress, availableTools) {
     const headers = {'Content-Type': 'application/json'};
     if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
-    const payload = JSON.stringify({model: model, messages: messages, tools: TOOLS, tool_choice: 'auto'});
+    const payload = JSON.stringify({model: model, messages: messages, tools: availableTools, tool_choice: 'auto'});
     let waited = 0;
     for (let retry = 0; retry <= MAX_RATE_RETRIES; retry++) {
       if (signal.aborted) fail('Solicitud cancelada.');
@@ -864,7 +879,8 @@
         {role: 'user', content: prompt},
         ...rounds.slice(-2).flat()
       ];
-      const reply = await requestCompletion(endpoint, model, config.apiKey, messages, signal, onProgress);
+      const availableTools=selectTools(prompt,context.totals.cubes>0);
+      const reply = await requestCompletion(endpoint, model, config.apiKey, messages, signal, onProgress, availableTools);
       if (signal.aborted || Project !== project) fail('Solicitud cancelada o el proyecto ha cambiado.');
       const calls = reply.tool_calls || [];
       if (!calls.length) return String(reply.content || (budget.toolCalls ? 'Se aplicaron cambios al modelo.' : 'No se realizaron cambios.'));
