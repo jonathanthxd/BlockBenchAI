@@ -1,9 +1,9 @@
-/* Blockbench AI 0.1.0 — MIT License, github.com/jonathanthxd/BlockBenchAI */
+/* Blockbench AI 0.2.0 — MIT License, github.com/jonathanthxd/BlockBenchAI */
 (function () {
   'use strict';
 
   const ID = 'blockbench_ai';
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const DEFAULT_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
   const STORAGE_KEY = 'blockbench_ai_preferences_v1';
   const MAX_CUBES_PER_CALL = 32;
@@ -14,6 +14,9 @@
   let action = null;
   let style = null;
   let runningController = null;
+  const registeredSettings = {};
+  let sessionApiKey = '';
+  const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
 
   const vectorSchema = {type: 'array', items: {type: 'number'}, minItems: 3, maxItems: 3};
   const cubeSchema = {
@@ -292,6 +295,93 @@
   function savePreferences(endpoint, model) {
     try {localStorage.setItem(STORAGE_KEY, JSON.stringify({endpoint: endpoint, model: model}));} catch (_) {}
   }
+
+  // Real Blockbench plugin preferences, displayed in the Plugins > Settings tab.
+  // Credentials are deliberately excluded from native preferences: those persist to disk.
+  function settingsSnapshot() {
+    const fallback = preferences();
+    return {
+      provider: registeredSettings.provider ? String(registeredSettings.provider.value) : 'groq',
+      endpoint: registeredSettings.endpoint ? String(registeredSettings.endpoint.value) : fallback.endpoint,
+      model: registeredSettings.model ? String(registeredSettings.model.value) : fallback.model
+    };
+  }
+  function updatePanelSettings() {
+    if (!panel) return;
+    const vm = panel.inside_vue || panel.vue;
+    if (vm && typeof vm.refreshConfiguration === 'function') vm.refreshConfiguration();
+  }
+  function storeConfiguration(next) {
+    const endpoint = validateEndpoint(next.endpoint);
+    const model = safeName(next.model);
+    const provider = ['groq', 'openai', 'custom'].includes(next.provider) ? next.provider : 'custom';
+    if (registeredSettings.provider && registeredSettings.provider.value !== provider) registeredSettings.provider.set(provider);
+    if (registeredSettings.endpoint) registeredSettings.endpoint.set(endpoint);
+    if (registeredSettings.model) registeredSettings.model.set(model);
+    savePreferences(endpoint, model);
+    updatePanelSettings();
+  }
+  function openKeyDialog() {
+    new Dialog('bbai_key_dialog', {
+      title: 'Blockbench AI · API key',
+      icon: 'key',
+      width: 470,
+      form: {
+        info: {type: 'info', text: 'La clave se conserva solo durante esta sesión y no se guardará en las preferencias de Blockbench.'},
+        key: {type: 'password', label: 'API key', value: sessionApiKey,
+          placeholder: 'gsk_... / sk-...'}
+      },
+      onConfirm: function (values) {
+        sessionApiKey = typeof values.key === 'string' ? values.key.trim() : '';
+        const vm = panel && (panel.inside_vue || panel.vue);
+        if (vm && typeof vm.syncKey === 'function') vm.syncKey();
+        Blockbench.showQuickMessage(sessionApiKey ? 'Clave configurada para esta sesión' : 'Clave de sesión eliminada');
+      }
+    }).show();
+  }
+  function registerPreferences() {
+    const old = preferences();
+    registeredSettings.provider = new Setting('bbai_provider', {
+      plugin: ID, name: 'Proveedor', type: 'select',
+      description: 'Servicio de IA. Groq tiene un plan gratuito sujeto a límites.',
+      value: 'groq', options: {groq: 'Groq', openai: 'OpenAI', custom: 'Personalizado'},
+      onChange: function (value) {
+        if (value === 'groq') {
+          registeredSettings.endpoint.set(GROQ_ENDPOINT);
+          registeredSettings.model.set('openai/gpt-oss-120b');
+        } else if (value === 'openai') {
+          registeredSettings.endpoint.set(DEFAULT_ENDPOINT);
+          registeredSettings.model.set('gpt-4.1-mini');
+        }
+        updatePanelSettings();
+      }
+    });
+    registeredSettings.endpoint = new Setting('bbai_endpoint', {
+      plugin: ID, name: 'Endpoint de la API', type: 'text',
+      description: 'URL de Chat Completions compatible con OpenAI; HTTPS obligatorio salvo localhost.',
+      value: old.endpoint === DEFAULT_ENDPOINT ? GROQ_ENDPOINT : old.endpoint,
+      onChange: updatePanelSettings
+    });
+    registeredSettings.model = new Setting('bbai_model', {
+      plugin: ID, name: 'Modelo de IA', type: 'text',
+      description: 'Identificador exacto del modelo, por ejemplo openai/gpt-oss-120b.',
+      value: old.model === 'gpt-4.1-mini' ? 'openai/gpt-oss-120b' : old.model,
+      onChange: updatePanelSettings
+    });
+    registeredSettings.key = new Setting('bbai_session_key', {
+      plugin: ID, name: 'Configurar API key (solo sesión)', type: 'click', icon: 'key',
+      description: 'Abre una ventana segura para introducir la clave. No se guarda en disco.',
+      click: openKeyDialog
+    });
+  }
+  function unregisterPreferences() {
+    Object.keys(registeredSettings).forEach(function (key) {
+      if (registeredSettings[key]) registeredSettings[key].delete();
+      delete registeredSettings[key];
+    });
+    sessionApiKey = '';
+  }
+
   function systemPrompt() {
     return 'You are Blockbench AI, an AI modeling agent operating a native Blockbench project. ' +
       'You can INSPECT, CREATE native cube geometry, CREATE groups and EDIT existing cubes. ' +
@@ -401,12 +491,13 @@
     '</section>';
 
   function makeComponent() {
-    const prefs = preferences();
+    const prefs = settingsSnapshot();
     return {
       template: TEMPLATE,
       data: function () {
-        return {endpoint: prefs.endpoint, model: prefs.model, apiKey: '', prompt: '', status: '',
-          busy: false, showSettings: false, messages: [], history: [], projectIdentity: null};
+        return {provider: prefs.provider, endpoint: prefs.endpoint, model: prefs.model, apiKey: sessionApiKey,
+          view: 'chat', prompt: '', status: '', busy: false, showSettings: false,
+          messages: [], history: [], projectIdentity: null, steps: 0};
       },
       computed: {
         projectLabel: function () {
@@ -415,19 +506,35 @@
         }
       },
       methods: {
+        refreshConfiguration: function () {
+          const prefs = settingsSnapshot();
+          this.provider = prefs.provider;
+          this.endpoint = prefs.endpoint;
+          this.model = prefs.model;
+        },
+        syncKey: function () {this.apiKey = sessionApiKey;},
+        openSettings: function () {this.refreshConfiguration(); this.syncKey(); this.view = 'settings';},
+        changeProvider: function () {
+          if (this.provider === 'groq') {
+            this.endpoint = GROQ_ENDPOINT;
+            this.model = 'openai/gpt-oss-120b';
+          } else if (this.provider === 'openai') {
+            this.endpoint = DEFAULT_ENDPOINT;
+            this.model = 'gpt-4.1-mini';
+          }
+        },
         saveSettings: function () {
           try {
-            this.endpoint = validateEndpoint(this.endpoint);
-            this.model = safeName(this.model);
-            savePreferences(this.endpoint, this.model);
-            this.showSettings = false;
-            Blockbench.showQuickMessage('Blockbench AI settings saved (key stays in memory).');
+            storeConfiguration({provider: this.provider, endpoint: this.endpoint, model: this.model});
+            sessionApiKey = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
+            this.view = 'chat';
+            Blockbench.showQuickMessage('Configuración actualizada');
           } catch (error) {Blockbench.showQuickMessage(safeError(error.message));}
         },
         example: function () {this.prompt = 'Create a small friendly robot with a head, torso, arms and legs, organized into named groups.';},
         resetChat: function () {this.messages = []; this.history = []; this.projectIdentity = null;},
         scrollBottom: function () {
-          this.$nextTick(function () {
+          this.$nextTick(() => {
             const el = this.$refs.history;
             if (el) el.scrollTop = el.scrollHeight;
           });
@@ -444,6 +551,7 @@
           if (this.projectIdentity && this.projectIdentity !== current) this.resetChat();
           this.projectIdentity = current;
           const past = this.history.slice();
+          const config = settingsSnapshot();
           this.messages.push({role: 'user', content: text});
           this.busy = true;
           this.status = 'Preparing...';
@@ -451,8 +559,8 @@
           const controller = runningController;
           this.scrollBottom();
           try {
-            const answer = await perform(text, {endpoint: this.endpoint, model: this.model,
-              apiKey: this.apiKey, history: past}, (s) => {this.status = s; this.scrollBottom();}, controller.signal);
+            const answer = await perform(text, {endpoint: config.endpoint, model: config.model,
+              apiKey: sessionApiKey || this.apiKey, history: past}, (s) => {this.status = s; this.scrollBottom();}, controller.signal);
             this.messages.push({role: 'assistant', content: answer});
             this.history = past.concat([{role: 'user', content: text}, {role: 'assistant', content: answer}]).slice(-12);
           } catch (error) {
@@ -513,11 +621,16 @@
     variant: 'desktop',
     tags: ['Utility'],
     onload: function () {
+      registerPreferences();
       style = Blockbench.addCSS(CSS);
       panel = new Panel('blockbench_ai_panel', {
         name: 'Blockbench AI',
         icon: 'auto_awesome',
-        default_position: {slot: 'right_bar', height: 460},
+        plugin: ID,
+        growable: true,
+        resizable: true,
+        min_height: 240,
+        default_position: {slot: 'right_bar', height: 550},
         component: makeComponent()
       });
       action = new Action('blockbench_ai_open', {
@@ -537,6 +650,7 @@
       if (action) {action.delete(); action = null;}
       if (panel) {panel.delete(); panel = null;}
       if (style) {style.delete(); style = null;}
+      unregisterPreferences();
     }
   });
 })();
