@@ -193,6 +193,8 @@ test('rejects insecure remote API endpoint', async () => {
   const view = host.view();
   view.apiKey = 'token';
   view.endpoint = 'http://not-local.example/v1/chat/completions';
+  // Native preference storage is the source of truth for a request, not uncommitted form input.
+  host.nativeSettings.bbai_endpoint.set(view.endpoint);
   view.prompt = 'help';
   await view.send();
   assert.equal(contacted, false);
@@ -203,6 +205,8 @@ test('localhost OpenAI-compatible endpoints do not need an API key', async () =>
   const view = host.view();
   view.endpoint = 'http://localhost:11434/v1/chat/completions';
   view.model = 'qwen3';
+  host.nativeSettings.bbai_endpoint.set(view.endpoint);
+  host.nativeSettings.bbai_model.set(view.model);
   view.prompt = 'hello';
   await view.send();
   assert.equal(view.messages.at(-1).content, 'Hello from the local model.');
