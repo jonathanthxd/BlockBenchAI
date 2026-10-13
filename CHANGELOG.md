@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1 — Offline demo commands and discoverability
+
+- Fixed `Demo Dron` typed into chat being sent to the remote AI instead of the local model generator.
+- Added direct chat commands for drone, sword, android, and chest demos without any API key.
+- Added a persistent **Demos** picker in the chat header, available after welcome messages disappear.
+- Added 3 integration tests for offline routing, aliases, and normal AI prompts.
+
+
 ## 0.5.0 — Quality & provider infrastructure
 
 - Added native **Cloudflare Workers AI** integration with Qwen 3.8 27B preset, 32-character Account ID validation, and computed OpenAI-compatible Chat Completions endpoint.
