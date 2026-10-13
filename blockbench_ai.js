@@ -486,7 +486,7 @@
         group:part.group?resolveGroup(part.group):null};
     });
     const atlas=buildAtlas(planned.map(function(part){return part.paint;}),title);
-    const created=[], rootName=title, changed=[];
+    const created=[], rootName=title, subgroups=new Map();
     let root=null,textureAdded=false;
     Undo.initEdit({elements:[],outliner:true,textures:[]});
     try {
@@ -494,20 +494,29 @@
       textureAdded=true;
       root=new Group({name:rootName}).init().addTo('root');
       planned.forEach(function(part,i){
-        const cube=new Cube({name:part.name,from:part.from,to:part.to}).init().addTo(part.group||root);
+        let target=part.group||root;
+        if(!part.group && part.name.includes('|')){
+          const section=part.name.split('|')[0].trim().slice(0,32);
+          if(section && section!==rootName && (subgroups.has(section)||subgroups.size<22)){
+            if(!subgroups.has(section))subgroups.set(section,new Group({name:section}).init().addTo(root));
+            target=subgroups.get(section);
+          }
+        }
+        const cube=new Cube({name:part.name,from:part.from,to:part.to}).init().addTo(target);
         created.push(cube);
         mapCubeToAtlas(cube,atlas,i);
       });
       Undo.finishEdit('AI: Detailed painted model '+title, {elements:created,outliner:true,textures:[atlas.texture]});
     } catch(error){
       created.forEach(function(c){try{c.remove();}catch(_){}});
+      subgroups.forEach(function(group){try{group.remove();}catch(_){}});
       if(root)try{root.remove();}catch(_){}
       if(textureAdded)try{atlas.texture.remove(true);}catch(_){}
       rollback();throw error;
     }
     budget.remainingCubes-=created.length;
     redraw(created);
-    return {group:{uuid:root.uuid,name:root.name},texture:{uuid:atlas.texture.uuid,name:atlas.texture.name,
+    return {group:{uuid:root.uuid,name:root.name},subgroups:subgroups.size,texture:{uuid:atlas.texture.uuid,name:atlas.texture.name,
       pixels:[atlas.width,atlas.height]},created_count:created.length,parts:created.slice(0,60).map(function(c){return {uuid:c.uuid,name:c.name};})};
   }
   function paintExistingCubes(args) {
@@ -607,6 +616,30 @@
       part('Back | Battery LED',-.8,17.2,4.5,.8,19.9,5.1,accent,'gem');
       part('Torso | Service Vent Left',-3.6,14.7,-3.35,-1.6,16.6,-3.05,dark,'circuit');
       part('Torso | Service Vent Right',1.6,14.7,-3.35,3.6,16.6,-3.05,dark,'circuit');
+    }
+
+    // Quality pass: three-dimensional face features, surface seams, illuminated hardware,
+    // bevel-like corner strips, vents and asymmetrical circuit components.
+    const pupil=style==='villager'?'#214A55':accent;
+    part('Face | Left Lens',-2.8,29.25,-4.55,-1.15,30.35,-4.34,pupil,'gem');
+    part('Face | Right Lens',1.15,29.25,-4.55,2.8,30.35,-4.34,pupil,'gem');
+    part('Face | Nasal Seam',-.95,27.0,-6.29,.95,27.3,-6.15,dark,'metal');
+    part('Face | Speaker',-1.5,25.9,-4.65,1.5,26.45,-4.43,secondary,'circuit');
+    part('Face | Cheek Vent L',-3.45,26.9,-4.53,-2.45,28.4,-4.34,dark,'circuit');
+    part('Face | Cheek Vent R',2.45,26.9,-4.53,3.45,28.4,-4.34,dark,'circuit');
+    part('Chest | Collar Left',-3.45,22.55,-3.37,-.25,23.2,-3.14,light,'metal');
+    part('Chest | Collar Right',.25,22.55,-3.37,3.45,23.2,-3.14,light,'metal');
+    part('Chest | Left Detail',-3.4,18.6,-3.43,-2.9,21.5,-3.14,gold,'metal');
+    part('Chest | Right Detail',2.9,18.6,-3.43,3.4,21.5,-3.14,gold,'metal');
+    part('Waist | Front Buckle Detail',-.5,12.5,-3.7,.5,13.5,-3.46,accent,'gem');
+    for (const side of [-1,1]) {
+      const tag=side<0?'Left':'Right',sx=side<0?-5.6:5.6,leg=side<0?-2.3:2.3;
+      part(tag+' | Shoulder Inset',sx-1,21.7,-3.04,sx+1,23.0,-2.73,secondary,'metal');
+      part(tag+' | Bicep Connector',sx-.72,17.65,-2.38,sx+.72,18.9,-1.99,accent,'circuit');
+      part(tag+' | Elbow Bolt',sx-.45,15.9,-2.51,sx+.45,16.8,-2.15,gold,'metal');
+      part(tag+' | Wrist Indicator',sx-.65,11.5,-2.95,sx+.65,11.92,-2.7,accent,'gem');
+      part(tag+' | Knee Emblem',leg-.6,6.05,-2.7,leg+.6,6.85,-2.39,gold,'metal');
+      part(tag+' | Boot Seam',leg-1.65,1.7,-4.08,leg+1.65,2.03,-3.9,light,'metal');
     }
     return buildPaintedModel({name:name,parts:P},budget);
   }
