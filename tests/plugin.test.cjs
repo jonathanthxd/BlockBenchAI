@@ -17,20 +17,37 @@ function makeHost(fetchImpl) {
   const nativeSettings = {};
   let keyDialog = null;
   let savedSettings = 0;
+  const canvases = [];
   class Cube {
     static all = [];
     static selected = [];
     static isTypePermitted() { return true; }
     constructor(spec) {
       this.uuid = uuid();
+      this.faces = Object.fromEntries(['north','south','east','west','up','down'].map(x=>[x,{texture:false,uv:[0,0,16,16]}]));
       Object.assign(this, {
         selected: false, locked: false, from: [0, 0, 0], to: [1, 1, 1],
         origin: [0, 0, 0], rotation: [0, 0, 0], name: 'cube', color: 0
       }, spec);
     }
     init() { Cube.all.push(this); return this; }
+    setUVMode(value) {this.box_uv = value;}
     addTo(group) { this.parent = group === 'root' ? null : group; return this; }
     remove() { Cube.all = Cube.all.filter(c => c !== this); }
+  }
+  class Texture {
+    static all = [];
+    constructor(spec) {
+      this.uuid = uuid();
+      this.name = spec.name;
+      this.width = spec.width;
+      this.height = spec.height;
+    }
+    fromDataURL(url) {this.source = url; return this;}
+    add() {Texture.all.push(this); return this;}
+    remove() {Texture.all = Texture.all.filter(t=>t!==this);}
+    getUVWidth() {return 16;}
+    getUVHeight() {return 16;}
   }
   class Group {
     static all = [];
@@ -61,9 +78,31 @@ function makeHost(fetchImpl) {
     constructor(id, options) {this.id = id; this.options = options; keyDialog = this;}
     show() {return this;}
   }
+  const document = {
+    createElement(tag) {
+      assert.equal(tag, 'canvas');
+      const canvas = {
+        width: 0, height: 0,
+        commands: [],
+        getContext(contextType) {
+          assert.equal(contextType, '2d');
+          return {
+            fillStyle: '#000',
+            fillRect(x,y,w,h) {canvas.commands.push({x,y,w,h,color:this.fillStyle});}
+          };
+        },
+        toDataURL(type) {
+          assert.equal(type, 'image/png');
+          return 'data:image/png;base64,' + Buffer.from(JSON.stringify({width:this.width,height:this.height,paintedPixels:this.commands.length})).toString('base64');
+        }
+      };
+      canvases.push(canvas);
+      return canvas;
+    }
+  };
   const world = {
-    Cube, Group, Setting, Dialog,
-    Project: {uuid: 'project-1', name: 'Test project'},
+    Cube, Group, Texture, Setting, Dialog, document,
+    Project: {uuid: 'project-1', name: 'Test project', texture_width: 16, texture_height: 16},
     Format: {id: 'free', cubes: true, meshes: true},
     Plugin: {register(id, cfg) {assert.equal(id, 'blockbench_ai'); plugin = cfg;}},
     Panel: class {constructor(id, cfg) {panel = cfg;} delete() {unloaded.panel = true;} show() {}},
@@ -92,7 +131,7 @@ function makeHost(fetchImpl) {
     for (const [key, value] of Object.entries(component.methods)) state[key] = value.bind(state);
     return state;
   }
-  return {world, panel, plugin, view, transactions, unloaded, notifications, nativeSettings, getKeyDialog: () => keyDialog, getSavedSettings: () => savedSettings};
+  return {world, panel, plugin, view, transactions, canvases, unloaded, notifications, nativeSettings, getKeyDialog: () => keyDialog, getSavedSettings: () => savedSettings};
 }
 const toolCall = (id, name, args) => ({id, type: 'function', function: {name, arguments: JSON.stringify(args)}});
 function answer(message) {
@@ -333,4 +372,86 @@ test('A distant quota reset does not leave the plugin waiting indefinitely', asy
   await view.send();
   assert.equal(n, 1);
   assert.match(view.messages.at(-1).content, /límite de uso gratuito/i);
+});
+
+test('Detailed humanoid creates complex named parts with a real PNG atlas and per-face UVs', async () => {
+  let n=0;
+  const host=makeHost(async () => {
+    n++;
+    if(n===1)return answer({tool_calls:[toolCall('character', 'generate_character', {
+      name:'Android Villager',style:'android_villager',primary:'#4D6470',secondary:'#293842',accent:'#46DBED'
+    })]});
+    return answer({content:'Aldea androide texturizado.'});
+  });
+  const view=host.view();
+  view.apiKey='test-secret';view.prompt='Crea un aldeano androide detallado';
+  await view.send();
+  assert.ok(host.world.Cube.all.length>=50,'character generator must create 50+ unique shapes');
+  assert.equal(host.world.Texture.all.length,1,'one actual PNG atlas texture');
+  const t=host.world.Texture.all[0];
+  assert.match(t.source,/^data:image\/png;base64,/);
+  assert.ok(host.canvases[0].commands.length>200,'pixels are actually drawn on the atlas');
+  const head=host.world.Cube.all.find(x=>x.name==='Head | Skull');
+  assert.ok(head);
+  assert.equal(head.faces.north.texture,t.uuid);
+  assert.equal(head.box_uv,false);
+  assert.notDeepEqual(Array.from(head.faces.north.uv),Array.from(head.faces.south.uv),'six faces have distinct UV tiles');
+  assert.ok(host.world.Cube.all.some(x=>x.name.includes('Servo')));
+  assert.ok(host.world.Cube.all.some(x=>x.name.includes('Finger')));
+  assert.equal(host.transactions.filter(t=>t.stage==='finish').length,1,'model and texture share one undo operation');
+  assert.equal(view.messages.at(-1).content,'Aldea androide texturizado.');
+});
+test('AI can paint existing cube pixels without modifying geometry', async () => {
+  let n=0;
+  const host=makeHost(async () => {
+    n++;
+    if(n===1)return answer({tool_calls:[toolCall('painted','paint_existing_cubes',{
+      parts:[{uuid:'test-1',paint:{base:'#557799',material:'circuit',accent:'#23CDDD',
+        marks:[{face:'north',shape:'rect',x:4,y:4,width:3,height:2,color:'#FFEEDD'}]}}]
+    })]});
+    return answer({content:'Textura pintada.'});
+  });
+  const cube=new host.world.Cube({name:'panel',from:[0,0,0],to:[3,8,3]}).init();
+  const view=host.view();view.apiKey='test';view.prompt='Pinta un circuito';
+  await view.send();
+  assert.equal(host.world.Cube.all.length,1);
+  assert.deepEqual(Array.from(cube.to),[3,8,3]);
+  assert.equal(host.world.Texture.all.length,1);
+  assert.equal(cube.faces.north.texture,host.world.Texture.all[0].uuid);
+  assert.ok(host.canvases[0].commands.some(cmd=>cmd.color==='#FFEEDD'));
+});
+test('build_painted_model rejects unsafe hex color before any model mutation', async () => {
+  let n=0, result;
+  const host=makeHost(async (_url,request)=>{
+    n++;
+    if(n===1)return answer({tool_calls:[toolCall('bad','build_painted_model',{
+      name:'Unsafe',
+      parts:[{name:'cube',from:[0,0,0],to:[3,3,3],paint:{base:'rgb(0,0,0)'}}]
+    })]});
+    result=JSON.parse(JSON.parse(request.body).messages.at(-1).content);
+    return answer({content:'No se pudo pintar.'});
+  });
+  const view=host.view();view.apiKey='key';view.prompt='Create painted model';await view.send();
+  assert.equal(host.world.Cube.all.length,0);
+  assert.equal(host.world.Texture.all.length,0);
+  assert.equal(result.ok,false);
+  assert.match(result.error,/#RRGGBB/);
+});
+test('different painted cubes receive separate face tiles and exported color data', async () => {
+  let n=0;
+  const host=makeHost(async ()=>{
+    n++;
+    if(n===1)return answer({tool_calls:[toolCall('material','build_painted_model',{
+      name:'Sword',parts:[
+        {name:'blade',from:[-1,3,-.5],to:[1,14,.5],paint:{base:'#DDEEFF',material:'metal'}},
+        {name:'handle',from:[-.5,0,-.5],to:[.5,3,.5],paint:{base:'#876543',material:'wood'}}
+      ]
+    })]});
+    return answer({content:'Espada pintada.'});
+  });
+  const view=host.view();view.apiKey='key';view.prompt='Paint a sword';await view.send();
+  assert.equal(host.world.Texture.all.length,1);
+  assert.equal(host.world.Cube.all.length,2);
+  assert.notDeepEqual(host.world.Cube.all[0].faces.north.uv,host.world.Cube.all[1].faces.north.uv);
+  assert.ok(host.canvases[0].commands.some(cmd=>/^#/.test(cmd.color)));
 });
