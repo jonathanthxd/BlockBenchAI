@@ -1,9 +1,9 @@
-/* Blockbench AI 0.4.0 — MIT License, github.com/jonathanthxd/BlockBenchAI */
+/* Blockbench AI 0.5.0 — MIT License, github.com/jonathanthxd/BlockBenchAI */
 (function () {
   'use strict';
 
   const ID = 'blockbench_ai';
-  const VERSION = '0.4.0';
+  const VERSION = '0.5.0';
   const DEFAULT_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
   const STORAGE_KEY = 'blockbench_ai_preferences_v1';
   const MAX_CUBES_PER_CALL = 32;
@@ -20,6 +20,7 @@
   let sessionApiKey = '';
   const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
   const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+  const CLOUDFLARE_MODEL = '@cf/qwen/qwen3.8-27b';
 
   const vectorSchema = {type: 'array', items: {type: 'number'}, minItems: 3, maxItems: 3};
   const cubeSchema = {
@@ -740,10 +741,18 @@
 
   // Real Blockbench plugin preferences, displayed in the Plugins > Settings tab.
   // Credentials are deliberately excluded from native preferences: those persist to disk.
+  function validCloudflareAccount(value) {
+    return typeof value === 'string' && /^[a-f0-9]{32}$/i.test(value.trim());
+  }
+  function cloudflareEndpoint(account) {
+    if (!validCloudflareAccount(account)) fail('Introduce un Account ID válido de Cloudflare (32 caracteres hexadecimales).');
+    return 'https://api.cloudflare.com/client/v4/accounts/' + account.trim() + '/ai/v1/chat/completions';
+  }
   function settingsSnapshot() {
     const fallback = preferences();
     return {
       provider: registeredSettings.provider ? String(registeredSettings.provider.value) : 'groq',
+      cloudflareAccount: registeredSettings.cloudflareAccount ? String(registeredSettings.cloudflareAccount.value || '') : '',
       endpoint: registeredSettings.endpoint ? String(registeredSettings.endpoint.value) : fallback.endpoint,
       model: registeredSettings.model ? String(registeredSettings.model.value) : fallback.model
     };
@@ -754,10 +763,12 @@
     if (vm && typeof vm.refreshConfiguration === 'function') vm.refreshConfiguration();
   }
   function storeConfiguration(next) {
-    const endpoint = validateEndpoint(next.endpoint);
+    const provider = ['groq', 'gemini', 'cloudflare', 'openai', 'custom'].includes(next.provider) ? next.provider : 'custom';
+    const account = String(next.cloudflareAccount || '').trim();
+    const endpoint = validateEndpoint(provider === 'cloudflare' ? cloudflareEndpoint(account) : next.endpoint);
     const model = safeName(next.model);
-    const provider = ['groq', 'gemini', 'openai', 'custom'].includes(next.provider) ? next.provider : 'custom';
     if (registeredSettings.provider && registeredSettings.provider.value !== provider) registeredSettings.provider.set(provider);
+    if (registeredSettings.cloudflareAccount && account !== String(registeredSettings.cloudflareAccount.value || '')) registeredSettings.cloudflareAccount.set(account);
     if (registeredSettings.endpoint) registeredSettings.endpoint.set(endpoint);
     if (registeredSettings.model) registeredSettings.model.set(model);
     savePreferences(endpoint, model);
@@ -786,7 +797,7 @@
     registeredSettings.provider = new Setting('bbai_provider', {
       plugin: ID, name: 'Proveedor', type: 'select',
       description: 'Servicio de IA. Groq tiene un plan gratuito sujeto a límites.',
-      value: 'groq', options: {groq: 'Groq', gemini: 'Google Gemini (gratis)', openai: 'OpenAI', custom: 'Personalizado'},
+      value: 'groq', options: {groq: 'Groq', gemini: 'Google Gemini', cloudflare: 'Cloudflare Workers AI (Qwen)', openai: 'OpenAI', custom: 'Personalizado'},
       onChange: function (value) {
         if (value === 'groq') {
           registeredSettings.endpoint.set(GROQ_ENDPOINT);
@@ -794,6 +805,10 @@
         } else if (value === 'gemini') {
           registeredSettings.endpoint.set(GEMINI_ENDPOINT);
           registeredSettings.model.set('gemini-3.8-flash');
+        } else if (value === 'cloudflare') {
+          const acc = registeredSettings.cloudflareAccount && String(registeredSettings.cloudflareAccount.value || '');
+          registeredSettings.endpoint.set(validCloudflareAccount(acc) ? cloudflareEndpoint(acc) : '');
+          registeredSettings.model.set(CLOUDFLARE_MODEL);
         } else if (value === 'openai') {
           registeredSettings.endpoint.set(DEFAULT_ENDPOINT);
           registeredSettings.model.set('gpt-4.1-mini');
@@ -812,6 +827,16 @@
       description: 'Identificador exacto del modelo, por ejemplo openai/gpt-oss-120b.',
       value: old.model === 'gpt-4.1-mini' ? 'openai/gpt-oss-120b' : old.model,
       onChange: updatePanelSettings
+    });
+    registeredSettings.cloudflareAccount = new Setting('bbai_cloudflare_account', {
+      plugin: ID, name: 'Cloudflare Account ID', type: 'text', value: '',
+      description: 'Identificador de cuenta de 32 caracteres. No es una clave privada.',
+      onChange: function (value) {
+        if (registeredSettings.provider && registeredSettings.provider.value === 'cloudflare') {
+          registeredSettings.endpoint.set(validCloudflareAccount(value) ? cloudflareEndpoint(value) : '');
+        }
+        updatePanelSettings();
+      }
     });
     registeredSettings.key = new Setting('bbai_session_key', {
       plugin: ID, name: 'Configurar API key (solo sesión)', type: 'click', icon: 'key',
@@ -1017,14 +1042,14 @@
     return 'He alcanzado el límite de pasos. Los cambios realizados se pueden deshacer en Blockbench. Puedes pedirme que continúe.';
   }
 
-  const TEMPLATE = "\n<section class=\"bbai-root\">\n  <header class=\"bbai-topbar\">\n    <div class=\"bbai-identity\">\n      <div class=\"bbai-logomark\"><i class=\"material-icons\">auto_awesome</i></div>\n      <div class=\"bbai-brand\">\n        <strong>Blockbench AI</strong>\n        <span>Tu asistente de modelado</span>\n      </div>\n    </div>\n    <button class=\"bbai-icon-button\" type=\"button\" @click=\"view === 'settings' ? view = 'chat' : openSettings()\" :title=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\" :aria-label=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\">\n      <i class=\"material-icons\">{{ view === 'settings' ? 'close' : 'tune' }}</i>\n    </button>\n  </header>\n  <nav class=\"bbai-tabs\" aria-label=\"Secciones de Blockbench AI\">\n    <button type=\"button\" :class=\"{active: view === 'chat'}\" @click=\"view = 'chat'\"><i class=\"material-icons\">chat_bubble_outline</i> Chat</button>\n    <button type=\"button\" :class=\"{active: view === 'settings'}\" @click=\"openSettings()\"><i class=\"material-icons\">settings</i> Ajustes</button>\n    <span class=\"bbai-version\">v0.4</span>\n  </nav>\n\n  <template v-if=\"view === 'settings'\">\n    <div class=\"bbai-settings-view\">\n      <div class=\"bbai-section-intro\">\n        <div class=\"bbai-section-icon\"><i class=\"material-icons\">tune</i></div>\n        <h3>Configurar IA</h3>\n        <p>Elige tu proveedor y conecta un modelo compatible con herramientas.</p>\n      </div>\n      <div class=\"bbai-config-card\">\n        <label class=\"bbai-field\">\n          <span>Proveedor</span>\n          <select v-model=\"provider\" @change=\"changeProvider\">\n            <option value=\"gemini\">Google Gemini · plan gratuito</option>\n            <option value=\"groq\">Groq · plan gratuito</option>\n            <option value=\"openai\">OpenAI</option>\n            <option value=\"custom\">Personalizado / local</option>\n          </select>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Modelo</span>\n          <input v-model.trim=\"model\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"openai/gpt-oss-120b\">\n          <small>Usa el identificador exacto indicado por tu proveedor.</small>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Endpoint de Chat Completions</span>\n          <input v-model.trim=\"endpoint\" type=\"url\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"https://.../chat/completions\">\n        </label>\n        <label class=\"bbai-field\">\n          <span>API key <em>Solo esta sesión</em></span>\n          <input v-model=\"apiKey\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"Introduce tu API key\">\n          <small>Tu clave no se guarda en el proyecto ni en las preferencias de Blockbench.</small>\n        </label>\n      </div>\n      <div class=\"bbai-notice\"><i class=\"material-icons\">verified_user</i><p>Los mensajes y un resumen del modelo se envían al endpoint elegido. Usa únicamente proveedores en los que confíes.</p></div>\n      <button type=\"button\" class=\"bbai-primary-button bbai-save\" @click=\"saveSettings()\">\n        <i class=\"material-icons\">check</i> Guardar configuración\n      </button>\n      <p class=\"bbai-settings-foot\">También encontrarás proveedor, modelo y endpoint en la pestaña <strong>Settings</strong> del plugin. La clave se introduce aquí o mediante su botón de configuración.</p>\n    </div>\n  </template>\n\n  <template v-else>\n    <div class=\"bbai-context-bar\">\n      <span class=\"bbai-live-dot\"></span>\n      <span class=\"bbai-context-project\" :title=\"projectLabel\">{{ projectLabel }}</span>\n      <button class=\"bbai-icon-button bbai-reset\" type=\"button\" @click=\"resetChat()\" :disabled=\"busy\" title=\"Nueva conversación\" aria-label=\"Nueva conversación\"><i class=\"material-icons\">edit_square</i></button>\n    </div>\n\n    <main class=\"bbai-conversation\" ref=\"history\" aria-live=\"polite\">\n      <div v-if=\"!messages.length\" class=\"bbai-welcome\">\n        <div class=\"bbai-welcome-badge\"><i class=\"material-icons\">auto_awesome</i><span>Tu espacio creativo</span></div>\n        <div class=\"bbai-orb\"><i class=\"material-icons\">view_in_ar</i></div>\n        <h2>Imagina. Describe.<br><span>Construye.</span></h2>\n        <p>Tu modelo empieza con una idea. Pídeme que cree geometrías, organice partes o edite los cubos de tu proyecto.</p>\n        <div class=\"bbai-suggestions\">\n          <button type=\"button\" @click=\"generateLocalDemo()\"><i class=\"material-icons\">offline_bolt</i><span>Demo local · Sin IA / API</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Crea un pequeño robot con cabeza, torso, brazos y piernas. Organiza sus partes en grupos.')\"><i class=\"material-icons\">smart_toy</i><span>Crear un robot</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Diseña una espada medieval con hoja, guarda, empuñadura y pomo usando cubos.')\"><i class=\"material-icons\">auto_fix_high</i><span>Diseñar una espada</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Inspecciona el modelo actual y dime cómo están organizados sus elementos.')\"><i class=\"material-icons\">account_tree</i><span>Analizar el modelo</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n        </div>\n      </div>\n\n      <article v-for=\"(message, index) in messages\" :key=\"index\" class=\"bbai-entry\" :class=\"'bbai-entry-' + message.role\">\n        <div class=\"bbai-entry-meta\">\n          <span v-if=\"message.role === 'assistant'\" class=\"bbai-entry-avatar\"><i class=\"material-icons\">auto_awesome</i></span>\n          <span v-else class=\"bbai-user-avatar\"><i class=\"material-icons\">person</i></span>\n          <strong>{{ message.role === 'user' ? 'Tú' : 'Blockbench AI' }}</strong>\n        </div>\n        <div class=\"bbai-entry-text\">{{ message.content }}</div>\n      </article>\n      <div v-if=\"busy\" class=\"bbai-active-step\" role=\"status\">\n        <span class=\"bbai-thinking-icon\"><i class=\"material-icons\">auto_awesome</i></span>\n        <div><strong>Trabajando en tu modelo</strong><span>{{ status }}</span></div>\n        <span class=\"bbai-pulse-dot\"></span>\n      </div>\n    </main>\n\n    <div class=\"bbai-bottom\">\n      <div v-if=\"!apiKey\" class=\"bbai-setup-hint\"><i class=\"material-icons\">key</i><span>¿Aún no conectas tu IA?</span><button type=\"button\" @click=\"openSettings()\">Configurar</button></div>\n      <form class=\"bbai-composer\" @submit.prevent=\"send()\">\n        <textarea v-model=\"prompt\" :disabled=\"busy\" @keydown.enter.exact.prevent=\"send()\" placeholder=\"Describe lo que quieres crear...\" rows=\"3\" maxlength=\"4000\" aria-label=\"Mensaje para Blockbench AI\"></textarea>\n        <div class=\"bbai-compose-toolbar\">\n          <span class=\"bbai-compose-tip\"><i class=\"material-icons\">deployed_code</i> Geometría editable</span>\n          <button v-if=\"busy\" class=\"bbai-stop-button\" type=\"button\" @click=\"cancel()\" title=\"Cancelar solicitud\"><i class=\"material-icons\">stop</i> Detener</button>\n          <button v-else class=\"bbai-send-button\" type=\"submit\" :disabled=\"!prompt.trim()\" title=\"Enviar mensaje\" aria-label=\"Enviar mensaje\"><i class=\"material-icons\">arrow_upward</i></button>\n        </div>\n      </form>\n      <div class=\"bbai-footer\"><span>Enter para enviar · Shift + Enter para nueva línea</span><span class=\"bbai-footer-status\"><i class=\"material-icons\">history</i> Undo</span></div>\n    </div>\n  </template>\n</section>";
+  const TEMPLATE = "\n<section class=\"bbai-root\">\n  <header class=\"bbai-topbar\">\n    <div class=\"bbai-identity\">\n      <div class=\"bbai-logomark\"><i class=\"material-icons\">auto_awesome</i></div>\n      <div class=\"bbai-brand\">\n        <strong>Blockbench AI</strong>\n        <span>Tu asistente de modelado</span>\n      </div>\n    </div>\n    <button class=\"bbai-icon-button\" type=\"button\" @click=\"view === 'settings' ? view = 'chat' : openSettings()\" :title=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\" :aria-label=\"view === 'settings' ? 'Volver al chat' : 'Configuración'\">\n      <i class=\"material-icons\">{{ view === 'settings' ? 'close' : 'tune' }}</i>\n    </button>\n  </header>\n  <nav class=\"bbai-tabs\" aria-label=\"Secciones de Blockbench AI\">\n    <button type=\"button\" :class=\"{active: view === 'chat'}\" @click=\"view = 'chat'\"><i class=\"material-icons\">chat_bubble_outline</i> Chat</button>\n    <button type=\"button\" :class=\"{active: view === 'settings'}\" @click=\"openSettings()\"><i class=\"material-icons\">settings</i> Ajustes</button>\n    <span class=\"bbai-version\">v0.5</span>\n  </nav>\n\n  <template v-if=\"view === 'settings'\">\n    <div class=\"bbai-settings-view\">\n      <div class=\"bbai-section-intro\">\n        <div class=\"bbai-section-icon\"><i class=\"material-icons\">tune</i></div>\n        <h3>Configurar IA</h3>\n        <p>Elige tu proveedor y conecta un modelo compatible con herramientas.</p>\n      </div>\n      <div class=\"bbai-config-card\">\n        <label class=\"bbai-field\">\n          <span>Proveedor</span>\n          <select v-model=\"provider\" @change=\"changeProvider\">\n            <option value=\"gemini\">Google Gemini · plan gratuito</option>\n            <option value=\"cloudflare\">Cloudflare · Qwen Workers AI</option>\n            <option value=\"groq\">Groq · plan gratuito</option>\n            <option value=\"openai\">OpenAI</option>\n            <option value=\"custom\">Personalizado / local</option>\n          </select>\n        </label>\n        <label v-if=\"provider === 'cloudflare'\" class=\"bbai-field\">\n          <span>Cloudflare Account ID</span>\n          <input v-model.trim=\"cloudflareAccount\" @input=\"updateCloudflareEndpoint()\" spellcheck=\"false\" maxlength=\"32\" placeholder=\"32 caracteres hexadecimales\">\n          <small>Solo se usa para construir la URL de Workers AI. No es tu token secreto.</small>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Modelo</span>\n          <input v-model.trim=\"model\" type=\"text\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"openai/gpt-oss-120b\">\n          <small>Usa el identificador exacto indicado por tu proveedor.</small>\n        </label>\n        <label class=\"bbai-field\">\n          <span>Endpoint de Chat Completions</span>\n          <input v-model.trim=\"endpoint\" type=\"url\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"https://.../chat/completions\">\n        </label>\n        <label class=\"bbai-field\">\n          <span>API key <em>Solo esta sesión</em></span>\n          <input v-model=\"apiKey\" type=\"password\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"Introduce tu API key\">\n          <small>Tu clave no se guarda en el proyecto ni en las preferencias de Blockbench.</small>\n        </label>\n      </div>\n      <div class=\"bbai-notice\"><i class=\"material-icons\">verified_user</i><p>Los mensajes y un resumen del modelo se envían al endpoint elegido. Usa únicamente proveedores en los que confíes.</p></div>\n      <button type=\"button\" class=\"bbai-primary-button bbai-save\" @click=\"saveSettings()\">\n        <i class=\"material-icons\">check</i> Guardar configuración\n      </button>\n      <p class=\"bbai-settings-foot\">También encontrarás proveedor, modelo y endpoint en la pestaña <strong>Settings</strong> del plugin. La clave se introduce aquí o mediante su botón de configuración.</p>\n    </div>\n  </template>\n\n  <template v-else>\n    <div class=\"bbai-context-bar\">\n      <span class=\"bbai-live-dot\"></span>\n      <span class=\"bbai-context-project\" :title=\"projectLabel\">{{ projectLabel }}</span>\n      <button class=\"bbai-icon-button bbai-reset\" type=\"button\" @click=\"resetChat()\" :disabled=\"busy\" title=\"Nueva conversación\" aria-label=\"Nueva conversación\"><i class=\"material-icons\">edit_square</i></button>\n    </div>\n\n    <main class=\"bbai-conversation\" ref=\"history\" aria-live=\"polite\">\n      <div v-if=\"!messages.length\" class=\"bbai-welcome\">\n        <div class=\"bbai-welcome-badge\"><i class=\"material-icons\">auto_awesome</i><span>Tu espacio creativo</span></div>\n        <div class=\"bbai-orb\"><i class=\"material-icons\">view_in_ar</i></div>\n        <h2>Imagina. Describe.<br><span>Construye.</span></h2>\n        <p>Tu modelo empieza con una idea. Pídeme que cree geometrías, organice partes o edite los cubos de tu proyecto.</p>\n        <div class=\"bbai-suggestions\">\n          <button type=\"button\" @click=\"generateLocalDemo()\"><i class=\"material-icons\">offline_bolt</i><span>Demo local · Sin IA / API</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Crea un pequeño robot con cabeza, torso, brazos y piernas. Organiza sus partes en grupos.')\"><i class=\"material-icons\">smart_toy</i><span>Crear un robot</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Diseña una espada medieval con hoja, guarda, empuñadura y pomo usando cubos.')\"><i class=\"material-icons\">auto_fix_high</i><span>Diseñar una espada</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n          <button type=\"button\" @click=\"useSuggestion('Inspecciona el modelo actual y dime cómo están organizados sus elementos.')\"><i class=\"material-icons\">account_tree</i><span>Analizar el modelo</span><i class=\"material-icons bbai-chevron\">north_east</i></button>\n        </div>\n      </div>\n\n      <article v-for=\"(message, index) in messages\" :key=\"index\" class=\"bbai-entry\" :class=\"'bbai-entry-' + message.role\">\n        <div class=\"bbai-entry-meta\">\n          <span v-if=\"message.role === 'assistant'\" class=\"bbai-entry-avatar\"><i class=\"material-icons\">auto_awesome</i></span>\n          <span v-else class=\"bbai-user-avatar\"><i class=\"material-icons\">person</i></span>\n          <strong>{{ message.role === 'user' ? 'Tú' : 'Blockbench AI' }}</strong>\n        </div>\n        <div class=\"bbai-entry-text\">{{ message.content }}</div>\n      </article>\n      <div v-if=\"busy\" class=\"bbai-active-step\" role=\"status\">\n        <span class=\"bbai-thinking-icon\"><i class=\"material-icons\">auto_awesome</i></span>\n        <div><strong>Trabajando en tu modelo</strong><span>{{ status }}</span></div>\n        <span class=\"bbai-pulse-dot\"></span>\n      </div>\n    </main>\n\n    <div class=\"bbai-bottom\">\n      <div v-if=\"!apiKey\" class=\"bbai-setup-hint\"><i class=\"material-icons\">key</i><span>¿Aún no conectas tu IA?</span><button type=\"button\" @click=\"openSettings()\">Configurar</button></div>\n      <form class=\"bbai-composer\" @submit.prevent=\"send()\">\n        <textarea v-model=\"prompt\" :disabled=\"busy\" @keydown.enter.exact.prevent=\"send()\" placeholder=\"Describe lo que quieres crear...\" rows=\"3\" maxlength=\"4000\" aria-label=\"Mensaje para Blockbench AI\"></textarea>\n        <div class=\"bbai-compose-toolbar\">\n          <span class=\"bbai-compose-tip\"><i class=\"material-icons\">deployed_code</i> Geometría editable</span>\n          <button v-if=\"busy\" class=\"bbai-stop-button\" type=\"button\" @click=\"cancel()\" title=\"Cancelar solicitud\"><i class=\"material-icons\">stop</i> Detener</button>\n          <button v-else class=\"bbai-send-button\" type=\"submit\" :disabled=\"!prompt.trim()\" title=\"Enviar mensaje\" aria-label=\"Enviar mensaje\"><i class=\"material-icons\">arrow_upward</i></button>\n        </div>\n      </form>\n      <div class=\"bbai-footer\"><span>Enter para enviar · Shift + Enter para nueva línea</span><span class=\"bbai-footer-status\"><i class=\"material-icons\">history</i> Undo</span></div>\n    </div>\n  </template>\n</section>";
 
   function makeComponent() {
     const prefs = settingsSnapshot();
     return {
       template: TEMPLATE,
       data: function () {
-        return {provider: prefs.provider, endpoint: prefs.endpoint, model: prefs.model, apiKey: sessionApiKey,
+        return {provider: prefs.provider, cloudflareAccount: prefs.cloudflareAccount, endpoint: prefs.endpoint, model: prefs.model, apiKey: sessionApiKey,
           view: 'chat', prompt: '', status: '', busy: false, showSettings: false,
           messages: [], history: [], projectIdentity: null, steps: 0};
       },
@@ -1038,6 +1063,7 @@
         refreshConfiguration: function () {
           const prefs = settingsSnapshot();
           this.provider = prefs.provider;
+          this.cloudflareAccount = prefs.cloudflareAccount;
           this.endpoint = prefs.endpoint;
           this.model = prefs.model;
         },
@@ -1050,14 +1076,20 @@
           } else if (this.provider === 'gemini') {
             this.endpoint = GEMINI_ENDPOINT;
             this.model = 'gemini-3.8-flash';
+          } else if (this.provider === 'cloudflare') {
+            this.model = CLOUDFLARE_MODEL;
+            this.updateCloudflareEndpoint();
           } else if (this.provider === 'openai') {
             this.endpoint = DEFAULT_ENDPOINT;
             this.model = 'gpt-4.1-mini';
           }
         },
+        updateCloudflareEndpoint: function () {
+          if (this.provider === 'cloudflare') this.endpoint = validCloudflareAccount(this.cloudflareAccount) ? cloudflareEndpoint(this.cloudflareAccount) : '';
+        },
         saveSettings: function () {
           try {
-            storeConfiguration({provider: this.provider, endpoint: this.endpoint, model: this.model});
+            storeConfiguration({provider: this.provider, cloudflareAccount: this.cloudflareAccount, endpoint: this.endpoint, model: this.model});
             sessionApiKey = typeof this.apiKey === 'string' ? this.apiKey.trim() : '';
             this.view = 'chat';
             Blockbench.showQuickMessage('Configuración actualizada');
