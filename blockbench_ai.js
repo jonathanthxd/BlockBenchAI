@@ -659,13 +659,13 @@
     plain:'plain', p:'plain'
   };
   const COMPACT_TOOL = tool('compose_model',
-    'Build detailed native Blockbench painted 3D model using compact parts. Each part = [name, x1,y1,z1,x2,y2,z2, material, paletteSlot]. Material: m metal,w wood,f fabric,s stone,k skin,c circuit,g gem,p plain. Palette slot: primary,secondary,accent,skin,metal,wood,dark,gold. Use many small parts to sculpt silhouette. Coordinates are integers or decimals. Front faces -Z.',
+    'Build detailed native Blockbench painted 3D model using compact parts. Each part is compact text: name|x1,y1,z1|x2,y2,z2|material|paletteSlot. Use no pipe inside names. Example: Blade|-1,0,-0.5|1,16,0.5|m|primary. Material: m metal,w wood,f fabric,s stone,k skin,c circuit,g gem,p plain. Palette slot: primary,secondary,accent,skin,metal,wood,dark,gold. Use many small parts to sculpt silhouette. Coordinates are integers or decimals. Front faces -Z.',
     {
       name:{type:'string'},
       palette:{type:'object',additionalProperties:false,
         properties:{primary:{type:'string'},secondary:{type:'string'},accent:{type:'string'},skin:{type:'string'}}},
-      parts:{type:'array',maxItems:96,items:{type:'array',minItems:9,maxItems:9,
-        items:{description:'[name,x1,y1,z1,x2,y2,z2,material,paletteSlot]'}}}
+      parts:{type:'array',maxItems:96,items:{type:'string',maxLength:180,
+        description:'Name|x,y,z|x,y,z|materialCode|paletteSlot; no extra delimiters'}}
     },['name','parts']);
   function composeModel(args,budget) {
     if(!args || !Array.isArray(args.parts) || args.parts.length===0 || args.parts.length>MAX_PAINTED_PARTS)fail('compose_model requires 1-96 parts.');
@@ -682,6 +682,13 @@
     };
     const toHex=(c)=>colorCode(c[0],c[1],c[2]);
     const parts=args.parts.map(function(p,i){
+      if(typeof p==='string'){
+        const split=p.split('|');
+        if(split.length!==5)fail('Part '+(i+1)+' must be name|from|to|material|palette');
+        const from=split[1].split(',').map(Number),to=split[2].split(',').map(Number);
+        if(from.length!==3||to.length!==3)fail('Part '+(i+1)+' has invalid coordinates.');
+        p=[split[0],...from,...to,split[3],split[4]];
+      }
       if(!Array.isArray(p)||p.length!==9)fail('Part '+(i+1)+' needs exactly 9 fields.');
       const material=COMPACT_MATERIALS[String(p[7]).toLowerCase()];
       if(!material)fail('Unknown material on part '+(i+1));
@@ -883,13 +890,13 @@
   }
 
 
-  function selectTools(prompt, populated) {
+  function selectTools(prompt, populated, advanced) {
     const lower=String(prompt||'').toLowerCase();
     const character=/(aldean|villager|androide|android|robot|personaje|character|humanoid|humano|caballero|knight|golem)/i.test(lower);
     const edit=populated&&/(modifica|modificar|cambia|cambiar|ajusta|ajustar|editar|edita|pinta|pintar|repinta|repaint|modify|change|color|textur|extend|alarga|mejora|improve)/i.test(lower);
     // No huge nested paint schema unless the user explicitly asks for a repaint.
     if(edit) return TOOLS.filter(function(t){return ['inspect_scene','edit_cubes','paint_existing_cubes'].includes(t.function.name);});
-    if(character) return TOOLS.filter(function(t){return ['generate_character','inspect_scene'].includes(t.function.name);});
+    if(character) return advanced ? [TOOLS.find(t=>t.function.name==='generate_character'),COMPACT_TOOL,TOOLS.find(t=>t.function.name==='inspect_scene')] : TOOLS.filter(function(t){return ['generate_character','inspect_scene'].includes(t.function.name);});
     return [COMPACT_TOOL, TOOLS.find(function(t){return t.function.name==='inspect_scene';})];
   }
   function compactSceneSnapshot(ctx, firstRound) {
@@ -980,7 +987,7 @@
         {role: 'user', content: prompt},
         ...rounds.slice(-1).flat()
       ];
-      const availableTools=selectTools(prompt,context.totals.cubes>0);
+      const availableTools=selectTools(prompt,context.totals.cubes>0,endpoint===GEMINI_ENDPOINT);
       const reply = await requestCompletion(endpoint, model, config.apiKey, messages, signal, onProgress, availableTools);
       if (signal.aborted || Project !== project) fail('Solicitud cancelada o el proyecto ha cambiado.');
       const calls = reply.tool_calls || [];
