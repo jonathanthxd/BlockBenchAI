@@ -2,7 +2,49 @@
 
 **BlockBenchAI** is an independent, MIT-licensed AI modeling assistant for [Blockbench](https://www.blockbench.net/). Write a prompt in the dockable chat panel to create or modify **real, editable Blockbench cubes and groups**.
 
-> **Version 0.3.0 — experimental public test.** JavaScript syntax and mocked Blockbench integration are checked in GitHub Actions. Real Blockbench Desktop behavior still requires in-app testing.
+> **Version 0.4.0 — experimental public test.** JavaScript syntax and mocked Blockbench integration are checked in GitHub Actions. Real Blockbench Desktop behavior still requires in-app testing.
+
+## What's new in v0.4 — quality, Gemini, compact geometry and rate-limit control
+
+**Reason for this update:** Groq's free GPT-OSS 120B plan enforces **8,000 tokens/minute** and returns HTTP 413 when one request would exceed that ceiling. Sending verbose tool schemas, project snapshots and repeated conversation transcripts could exceed the entire quota before any modeling began.
+
+### Choose a free provider
+
+In **Blockbench AI → Ajustes**, select one of the following presets and enter the API key for **that provider**:
+
+| Provider | Model | Chat Completions endpoint | Notes |
+| --- | --- | --- | --- |
+| **Google Gemini (recommended)** | \`gemini-3.8-flash\` | \`https://generativelanguage.googleapis.com/v1beta/openai/chat/completions\` | Google lists free-tier access; exact limits depend on the project and model. |
+| **Groq (fast)** | \`openai/gpt-oss-120b\` | \`https://api.groq.com/openai/v1/chat/completions\` | Groq free: 8K TPM for this model, and quota resets. |
+| **OpenAI** | \`gpt-4.1-mini\` | \`https://api.openai.com/v1/chat/completions\` | Requires available API credit. |
+| **Custom/local** | Your model | Compatible endpoint | Requires OpenAI-style Chat Completions and tool calling. |
+
+Get Gemini key: [Google AI Studio](https://aistudio.google.com/apikey). Groq key: [GroqCloud](https://console.groq.com/keys).
+
+**Important:** switching providers requires entering a key issued by the newly selected provider. No API is guaranteed to be unlimited, and free quotas can change.
+
+### Under the hood
+
+- **Compact modeling plan:** for new non-humanoid models, AI returns simple 9-field shape tuples. The plugin expands geometry, shading, palette, UV tiles and PNG texture generation locally.
+- **Small tools only:** the API no longer sees all the nested schemas for every possible paint operation.
+- **Context budgeting:** fewer previous turns and smaller scene previews. This reduces repetitive input tokens.
+- **Groq 413 protection:** conservative preflight estimate for GPT-OSS 120B, plus a descriptive provider-switch message for 413. We do **not** automatically retry a request that exceeds the per-request quota.
+- **Better procedural character finish:** expressive eye-lens geometry, cheeks, collar, emblems, wrist lights, face details, boots and seams, on top of the prior base.
+- **Outliner organization:** generated multi-part models gain subgroups based on component name prefixes, e.g. Head, Face, Chest, Left and Right.
+
+**Realistic quality note:** these improvements produce a more coherent editable model, but this is still **procedural cuboid modeling** with pixel texture patterns, not image-to-3D reconstruction or advanced sculpting. Quality depends on model, prompt, available format and follow-up iterations.
+
+### Suggested test prompts
+
+In a **fresh Generic Model**:
+
+> Crea un aldeano androide con generate_character, acabado detallado, ojos luminosos, placas de armadura, cables y aspecto pixel art. Paleta gris titanio, cobre y cian.
+
+For non-character models:
+
+> Crea una motocicleta futurista con distintas capas de geometría y texturas pixel art reales. Quiero ruedas, suspensión, faros, asiento, alerones y paneles de motor.
+
+For the first test, keep the model empty; do not ask for rigging or arbitrary polygonal meshes yet.
 
 ## What's new in v0.3 — actual pixel texturing and detailed models
 
@@ -96,7 +138,7 @@ This is an early modeling prototype, **not** an all-format AI 3D asset generator
 
 The endpoint uses the **OpenAI Chat Completions tool calling format**. Endpoints without this API format are not supported. Remote endpoints must use HTTPS; localhost may use HTTP.
 
-If the screen appears outdated after reinstalling, verify the plugin shows **v0.3** in the chat tab and that the old local plugin has been disabled.
+If the screen appears outdated after reinstalling, verify the plugin shows **v0.4** in the chat tab and that the old local plugin has been disabled.
 
 ## Testing and contributing
 
