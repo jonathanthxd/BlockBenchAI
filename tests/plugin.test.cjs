@@ -186,7 +186,7 @@ test('project switch prevents applying AI changes', async () => {
   view.prompt = 'make a block';
   await view.send();
   assert.equal(host.world.Cube.all.length, 0);
-  assert.match(view.messages.at(-1).content, /project changed/i);
+  assert.match(view.messages.at(-1).content, /proyecto ha cambiado/i);
 });
 test('rejects insecure remote API endpoint', async () => {
   let contacted = false;
